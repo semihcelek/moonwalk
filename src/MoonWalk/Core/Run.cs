@@ -41,6 +41,15 @@ public sealed class Run
     public string Brief { get; set; } = "";
     public RunStatus Status { get; set; } = RunStatus.Queued;
     public string? CurrentStage { get; set; }
+    public string? Agent { get; set; }
+    public string? Branch { get; set; }
+    public string? ReturnTo { get; set; }
+    public string? Commit { get; set; }
+    public double? CostUsd { get; set; }
+
+    /// <summary>True while this run still owns the project's working folder (the repo sits on the run branch).</summary>
+    public bool WorkspaceHeld { get; set; }
+
     public string? Error { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.Now;

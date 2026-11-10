@@ -161,6 +161,7 @@ async function showRun(id) {
 
   const head = h('div', { class: 'run-head' });
   const facts = h('div', { class: 'facts' });
+  const banner = h('div');
   const stagesBox = h('div', { class: 'stages' });
   const briefBox = h('div', { class: 'brief-box' }, h('b', {}, 'Brief'), run.brief);
   const errorSlot = h('div');
@@ -181,7 +182,7 @@ async function showRun(id) {
 
   view.replaceChildren(
     h('div', { class: 'run-head' }, h('a', { class: 'back', href: '#/' }, '← Runs')),
-    head, facts,
+    head, facts, banner,
     h('div', { class: 'run-grid' },
       h('section', { class: 'panel' }, h('h2', {}, 'Stages'), stagesBox, errorSlot, briefBox),
       h('section', { class: 'panel' },
@@ -195,11 +196,19 @@ async function showRun(id) {
     facts.replaceChildren(
       h('span', {}, 'Project ', h('b', {}, r.project)),
       h('span', {}, 'Run ', h('b', {}, r.id)),
+      r.agent && h('span', {}, 'Agent ', h('b', {}, r.agent)),
+      r.branch && h('span', {}, 'Branch ', h('b', {}, r.branch)),
+      r.commit && h('span', {}, 'Commit ', h('b', {}, r.commit)),
+      r.costUsd != null && h('span', {}, 'Cost ', h('b', {}, `$${r.costUsd.toFixed(3)}`)),
       h('span', {}, 'Elapsed ', h('b', {}, duration(r.createdAt, isActive(r.status) ? null : r.finishedAt ?? r.updatedAt))));
+    banner.replaceChildren(...(r.workspaceHeld ? [h('div', { class: 'notice' },
+      h('div', {}, h('b', {}, 'Workspace held. '),
+        `The repository is on ${r.branch}. Play or review it there, then release to switch back to ${r.returnTo}. The next run for this project waits until you do.`),
+      h('button', { class: 'btn primary small', type: 'button', onclick: () => releaseRun(r.id) }, 'Release workspace'))] : []));
     stagesBox.replaceChildren(...r.stages.map((s) =>
       h('div', { class: `stage s-${s.status.toLowerCase()}` },
         h('span', { class: 'node' }),
-        h('div', { class: 'name' }, s.name,
+        h('div', { class: 'name' }, h('span', {}, s.name, s.agent && h('span', { class: 'agent-tag' }, s.agent)),
           s.startedAt && h('span', { class: 'dur' }, duration(s.startedAt, s.finishedAt))),
         s.summary && h('div', { class: 'sum' }, s.summary))));
     errorSlot.replaceChildren(...(r.error && r.status !== 'Done' ? [h('div', { class: 'error-box' }, r.error)] : []));
@@ -290,12 +299,44 @@ async function cancelRun(id) {
   catch (err) { alert(`Could not cancel: ${err.message}`); }
 }
 
+async function releaseRun(id) {
+  try { await api(`/api/runs/${encodeURIComponent(id)}/release`, { method: 'POST' }); }
+  catch (err) { alert(`Could not release the workspace: ${err.message}`); }
+}
+
 /* --------------------------------------------------------------- new run */
 
 const dialog = document.getElementById('newRun');
 const briefInput = document.getElementById('brief');
+const projectSelect = document.getElementById('project');
+const projectNote = document.getElementById('projectNote');
 
-document.getElementById('newRunBtn').addEventListener('click', () => { dialog.showModal(); briefInput.focus(); });
+async function loadProjects() {
+  const projects = await api('/api/projects');
+  projectSelect.replaceChildren(...projects.map((p) =>
+    h('option', { value: p.name, disabled: !p.valid, 'data-errors': (p.errors ?? []).join(' ') },
+      p.valid ? p.name : `${p.name} (invalid)`)));
+  const first = projects.find((p) => p.valid && p.name !== 'demo') ?? projects.find((p) => p.valid);
+  if (first) projectSelect.value = first.name;
+  showProjectNote(projects);
+  projectSelect.onchange = () => showProjectNote(projects);
+}
+
+function showProjectNote(projects) {
+  const p = projects.find((x) => x.name === projectSelect.value);
+  if (!p) { projectNote.textContent = ''; return; }
+  projectNote.textContent = p.name === 'demo'
+    ? 'Scripted stages, no repository or agent.'
+    : `${p.agent} · ${p.workspace} workspace on ${p.baseBranch} · ${p.repoPath}`;
+  const bad = projects.filter((x) => !x.valid).map((x) => `${x.name}: ${x.errors.join(' ')}`);
+  if (bad.length) projectNote.textContent += `\nNot usable: ${bad.join(' | ')}`;
+}
+
+document.getElementById('newRunBtn').addEventListener('click', async () => {
+  try { await loadProjects(); } catch { /* keep whatever is listed */ }
+  dialog.showModal();
+  briefInput.focus();
+});
 document.getElementById('newRunCancel').addEventListener('click', () => dialog.close());
 document.getElementById('newRunForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -305,7 +346,7 @@ document.getElementById('newRunForm').addEventListener('submit', async (e) => {
     const run = await api('/api/runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ brief, project: document.getElementById('project').value }),
+      body: JSON.stringify({ brief, project: projectSelect.value }),
     });
     briefInput.value = '';
     dialog.close();

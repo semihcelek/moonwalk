@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Threading.Channels;
 using MoonWalk.Core;
+using MoonWalk.Projects;
 
 namespace MoonWalk.Web;
 
@@ -21,12 +22,47 @@ public static class ApiEndpoints
             {
                 return Results.BadRequest(new { error = "brief is required" });
             }
-            var run = engine.Start(request.Brief.Trim(), string.IsNullOrWhiteSpace(request.Project) ? "demo" : request.Project);
-            return Results.Content(store.GetJson(run.Id)!, "application/json", statusCode: StatusCodes.Status201Created);
+            try
+            {
+                var run = engine.Start(request.Brief.Trim(), string.IsNullOrWhiteSpace(request.Project) ? "demo" : request.Project);
+                return Results.Content(store.GetJson(run.Id)!, "application/json", statusCode: StatusCodes.Status201Created);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
         });
 
         app.MapPost("/api/runs/{id}/cancel", (string id, RunEngine engine) =>
             engine.Cancel(id) ? Results.Accepted() : Results.NotFound());
+
+        app.MapPost("/api/runs/{id}/release", async (string id, RunEngine engine) =>
+        {
+            var (ok, message) = await engine.ReleaseAsync(id);
+            return ok ? Results.Ok(new { message }) : Results.Conflict(new { error = message });
+        });
+
+        app.MapGet("/api/projects", (ProjectRegistry projects) => Results.Json(
+            projects.List().Select(e => new
+            {
+                name = e.Profile.Name,
+                repoPath = e.Profile.IsDemo ? null : e.Profile.RepoPath,
+                baseBranch = e.Profile.IsDemo ? null : e.Profile.BaseBranch,
+                workspace = e.Profile.Workspace,
+                dirtyPolicy = e.Profile.DirtyPolicy,
+                agent = e.Profile.IsDemo ? null : e.Profile.Agent,
+                stages = e.Profile.Stages,
+                valid = e.IsValid,
+                errors = e.Errors,
+                file = e.File,
+            }),
+            Json.Options));
+
+        app.MapPost("/api/projects/reload", (ProjectRegistry projects) =>
+        {
+            projects.Reload();
+            return Results.Ok(new { count = projects.List().Count });
+        });
 
         app.MapGet("/api/stream", async (HttpContext context, RunStore store) =>
         {

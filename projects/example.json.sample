@@ -1,0 +1,37 @@
+{
+  // Copy to projects/<anything>.json (or *.local.json) and edit. MoonWalk reads every projects/*.json at startup,
+  // or when you POST /api/projects/reload.
+  "name": "my-game",
+  "repoPath": "C:\\Users\\me\\Projects\\MyGame",
+  "baseBranch": "develop",
+
+  // "branch": work on a run branch inside repoPath (no second checkout; best for Unity). One run per project at a time.
+  "workspace": "branch",
+
+  // "refuse": do not start with uncommitted changes. "baseline": remember them and only commit what the agent changed.
+  "dirtyPolicy": "refuse",
+
+  "agent": "claude",
+  "stages": ["Implement"],
+
+  // Extra rules appended to the agent prompt.
+  "extraInstructions": [
+    "Read docs/conventions.md before changing code."
+  ],
+
+  "guards": {
+    "allowPaths": [],
+    "denyPaths": [".git/**", "**/.env*", "ProjectSettings/**"],
+    "maxChangedFiles": 60,
+    "maxChangedLines": 2000
+  },
+
+  "claude": {
+    "path": "claude",
+    "model": null,
+    "maxTurns": 60,
+    "timeoutMinutes": 45,
+    "allowedTools": ["Read", "Edit", "Write", "Grep", "Glob", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)"],
+    "disallowedTools": ["Bash(git commit:*)", "Bash(git push:*)", "Bash(git add:*)"]
+  }
+}

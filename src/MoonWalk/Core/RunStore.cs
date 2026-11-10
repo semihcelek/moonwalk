@@ -65,11 +65,29 @@ public sealed class RunStore
         }
     }
 
+    public Run? Get(string id)
+    {
+        lock (_lock)
+        {
+            return _runs.TryGetValue(id, out var run)
+                ? JsonSerializer.Deserialize<Run>(JsonSerializer.Serialize(run, Json.Options), Json.Options)
+                : null;
+        }
+    }
+
     public string? GetJson(string id)
     {
         lock (_lock)
         {
             return _runs.TryGetValue(id, out var run) ? JsonSerializer.Serialize(run, Json.Options) : null;
+        }
+    }
+
+    public IReadOnlyList<(string Id, string Project)> HeldWorkspaces()
+    {
+        lock (_lock)
+        {
+            return _runs.Values.Where(r => r.WorkspaceHeld).Select(r => (r.Id, r.Project)).ToList();
         }
     }
 
