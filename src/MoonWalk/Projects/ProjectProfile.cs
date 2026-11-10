@@ -54,6 +54,18 @@ public sealed class ClaudeOptions
     public string[] ExtraArgs { get; set; } = [];
 }
 
+/// <summary>One command the Verify stage runs in the repository (no shell: command plus arguments). Steps run in order and stop at the first failure.</summary>
+public sealed class VerifyStep
+{
+    public string Name { get; set; } = "";
+
+    public string Command { get; set; } = "";
+
+    public string[] Args { get; set; } = [];
+
+    public int TimeoutMinutes { get; set; } = 15;
+}
+
 public sealed class ProjectProfile
 {
     public string Name { get; set; } = "";
@@ -69,6 +81,11 @@ public sealed class ProjectProfile
     public string Agent { get; set; } = "claude";
 
     public string[] Stages { get; set; } = ["Implement"];
+
+    /// <summary>Stages after which the run pauses until you approve, ask for a redo, or stop it.</summary>
+    public string[] Gates { get; set; } = [];
+
+    public VerifyStep[] Verify { get; set; } = [];
 
     /// <summary>Extra bullet points appended to the agent's rules (project conventions, docs to read first, ...).</summary>
     public string[] ExtraInstructions { get; set; } = [];

@@ -1,3 +1,4 @@
+using System.Text;
 using MoonWalk.Agents;
 using MoonWalk.Core;
 using MoonWalk.Projects;
@@ -24,38 +25,87 @@ public sealed record StageResult(StageOutcome Outcome, string? Summary = null)
     public static StageResult Blocked(string summary) => new(StageOutcome.Blocked, summary);
 }
 
-public sealed class StageContext(
-    string runId,
-    string brief,
-    string runDir,
-    string stageName,
-    EventHub hub,
-    ProjectProfile profile,
-    WorkspaceSession? workspace,
-    IAgent? agent,
-    Action<Action<Run>> updateRun)
+public sealed class StageContext
 {
-    public string RunId { get; } = runId;
+    public required string RunId { get; init; }
 
-    public string Brief { get; } = brief;
+    public required string Brief { get; init; }
 
-    public string RunDir { get; } = runDir;
+    public required string RunDir { get; init; }
 
-    public ProjectProfile Profile { get; } = profile;
+    public required string StageName { get; init; }
 
-    public WorkspaceSession? Workspace { get; } = workspace;
+    public required EventHub Hub { get; init; }
 
-    public IAgent? Agent { get; } = agent;
+    public required ProjectProfile Profile { get; init; }
+
+    public required Action<Action<Run>> UpdateRunAction { get; init; }
+
+    public required Func<Run?> GetRunFunc { get; init; }
+
+    public WorkspaceSession? Workspace { get; init; }
+
+    public IAgent? Agent { get; init; }
+
+    /// <summary>1 for the first time this stage runs in the run, 2 after a retry, and so on.</summary>
+    public int Attempt { get; init; } = 1;
+
+    public IReadOnlyList<string> Guidance { get; init; } = [];
+
+    /// <summary>Why the previous stage failed, when this stage is running again because of it.</summary>
+    public string? PreviousFailure { get; init; }
 
     public void Emit(string type, string? text, Dictionary<string, object?>? data = null) =>
-        hub.Append(RunId, type, stageName, text, data);
+        Hub.Append(RunId, type, StageName, text, data);
 
-    public void UpdateRun(Action<Run> mutate) => updateRun(mutate);
+    public void UpdateRun(Action<Run> mutate) => UpdateRunAction(mutate);
 
-    public void AddCost(double usd) => updateRun(r => r.CostUsd = (r.CostUsd ?? 0) + usd);
+    public Run? GetRun() => GetRunFunc();
+
+    public void AddCost(double usd) => UpdateRun(r => r.CostUsd = (r.CostUsd ?? 0) + usd);
 
     public void SetStageAgent(string agentName) =>
-        updateRun(r => r.Stages.First(s => s.Name == stageName).Agent = agentName);
+        UpdateRun(r => r.Stages.First(s => s.Name == StageName).Agent = agentName);
+
+    public void AddArtifact(string name) =>
+        UpdateRun(r =>
+        {
+            if (!r.Artifacts.Contains(name))
+            {
+                r.Artifacts.Add(name);
+            }
+        });
+
+    /// <summary>Writes a text file under the run folder and lists it as an artifact the UI can show.</summary>
+    public void WriteArtifact(string name, string text)
+    {
+        var path = Path.Combine(RunDir, name.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, text, new UTF8Encoding(false));
+        AddArtifact(name);
+    }
+
+    /// <summary>Prompt sections for guidance notes and the reason the previous attempt failed.</summary>
+    public string PromptContext()
+    {
+        var sb = new StringBuilder();
+        if (Guidance.Count > 0)
+        {
+            sb.AppendLine("## Guidance from the user (follow it)");
+            foreach (var note in Guidance)
+            {
+                sb.AppendLine("- " + note.ReplaceLineEndings(" "));
+            }
+            sb.AppendLine();
+        }
+        if (!string.IsNullOrWhiteSpace(PreviousFailure))
+        {
+            sb.AppendLine("## What went wrong last time");
+            sb.AppendLine(PreviousFailure);
+            sb.AppendLine();
+        }
+        return sb.ToString();
+    }
 }
 
 public interface IStage

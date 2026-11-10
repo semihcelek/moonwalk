@@ -188,6 +188,15 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
         }
     }
 
+    /// <summary>Commit list and per-file diff summary of the run branch against its base, for the handover note.</summary>
+    public async Task<(string Log, string DiffStat)> GetHandoverInfoAsync(WorkspaceState state, CancellationToken ct)
+    {
+        var range = $"{state.BaseBranch}..{state.Branch}";
+        var log = await Git.RunAsync(repoPath, ct, "log", "--oneline", range);
+        var stat = await Git.RunAsync(repoPath, ct, "diff", "--stat", "--no-renames", range);
+        return (log.Ok ? log.Out : "", stat.Ok ? stat.Out : "");
+    }
+
     public async Task ReleaseAsync(WorkspaceState state, CancellationToken ct) =>
         await Git.RunOrThrowAsync(repoPath, ct, "checkout", state.ReturnTo);
 

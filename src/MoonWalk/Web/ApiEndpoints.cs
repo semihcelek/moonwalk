@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using MoonWalk.Agents;
 using MoonWalk.Core;
 using MoonWalk.Projects;
 
@@ -7,8 +8,13 @@ namespace MoonWalk.Web;
 
 public sealed record NewRunRequest(string? Brief, string? Project);
 
+public sealed record GuidanceRequest(string? Text);
+
 public static class ApiEndpoints
 {
+    private static IResult Reply((bool Ok, string Message) result) =>
+        result.Ok ? Results.Ok(new { message = result.Message }) : Results.Conflict(new { error = result.Message });
+
     public static void MapApi(this WebApplication app)
     {
         app.MapGet("/api/runs", (RunStore store) => Results.Content(store.ListJson(), "application/json"));
@@ -35,6 +41,34 @@ public static class ApiEndpoints
 
         app.MapPost("/api/runs/{id}/cancel", (string id, RunEngine engine) =>
             engine.Cancel(id) ? Results.Accepted() : Results.NotFound());
+
+        app.MapPost("/api/runs/{id}/pause", (string id, RunEngine engine) => Reply(engine.Pause(id)));
+
+        app.MapPost("/api/runs/{id}/resume", (string id, RunEngine engine) => Reply(engine.Resume(id)));
+
+        app.MapPost("/api/runs/{id}/guidance", (string id, GuidanceRequest request, RunEngine engine) =>
+            Reply(engine.AddGuidance(id, request.Text ?? "")));
+
+        app.MapPost("/api/runs/{id}/decision", (string id, DecisionRequest request, RunEngine engine) =>
+            Reply(engine.Decide(id, request)));
+
+        app.MapGet("/api/agents", () => Results.Json(new { agents = AgentFactory.Known }, Json.Options));
+
+        app.MapGet("/api/runs/{id}/files/{**name}", (string id, string name, RunStore store, IConfiguration config) =>
+        {
+            var run = store.Get(id);
+            if (run is null || !run.Artifacts.Contains(name))
+            {
+                return Results.NotFound();
+            }
+            var root = Path.GetFullPath(Path.Combine(Path.GetFullPath(config["MoonWalk:DataDir"] ?? "runs"), id));
+            var path = Path.GetFullPath(Path.Combine(root, name.Replace('/', Path.DirectorySeparatorChar)));
+            if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
+            {
+                return Results.NotFound();
+            }
+            return Results.Text(File.ReadAllText(path), "text/plain; charset=utf-8");
+        });
 
         app.MapPost("/api/runs/{id}/release", async (string id, RunEngine engine) =>
         {

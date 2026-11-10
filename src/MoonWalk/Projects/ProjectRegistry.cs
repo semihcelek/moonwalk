@@ -27,7 +27,8 @@ public sealed class ProjectRegistry(string projectsDir)
         {
             Name = "demo",
             Workspace = WorkspaceMode.None,
-            Stages = ["Spec", "Implement", "Verify"],
+            Stages = ["Spec", "Implement", "Verify", "Handover"],
+            Gates = ["Spec"],
             IsDemo = true,
         },
         null,
@@ -134,6 +135,21 @@ public sealed class ProjectRegistry(string projectsDir)
         foreach (var stage in p.Stages.Where(s => !PipelineFactory.IsKnown(s)))
         {
             errors.Add($"Unknown stage '{stage}'. Known: {string.Join(", ", PipelineFactory.Known)}.");
+        }
+
+        foreach (var gate in p.Gates.Where(g => !p.Stages.Contains(g, StringComparer.OrdinalIgnoreCase)))
+        {
+            errors.Add($"Gate '{gate}' is not one of the project's stages.");
+        }
+
+        foreach (var step in p.Verify.Where(s => string.IsNullOrWhiteSpace(s.Command)))
+        {
+            errors.Add($"Verify step '{step.Name}' has no command.");
+        }
+
+        if (p.Stages.Contains("Verify", StringComparer.OrdinalIgnoreCase) && p.Verify.Length == 0)
+        {
+            errors.Add("The Verify stage needs at least one entry in 'verify'.");
         }
 
         return errors;

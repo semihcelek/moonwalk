@@ -2,7 +2,8 @@ namespace MoonWalk.Agents;
 
 public delegate void EmitEvent(string type, string? text, Dictionary<string, object?>? data = null);
 
-public sealed record AgentRequest(string Prompt, string WorkDir);
+/// <summary>Allowed/disallowed tool lists, when set, replace the ones from the project profile for this request (the Spec stage uses read-only tools).</summary>
+public sealed record AgentRequest(string Prompt, string WorkDir, string[]? AllowedTools = null, string[]? DisallowedTools = null);
 
 public sealed record AgentResult(
     int ExitCode,

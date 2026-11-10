@@ -19,6 +19,11 @@ public static class EventTypes
     public const string AgentTextDelta = "AgentTextDelta";
     public const string AgentToolUse = "AgentToolUse";
     public const string AgentToolResult = "AgentToolResult";
+    public const string WaitingForHuman = "WaitingForHuman";
+    public const string Decision = "Decision";
+    public const string Guidance = "Guidance";
+    public const string Paused = "Paused";
+    public const string Resumed = "Resumed";
     public const string System = "System";
     public const string Warning = "Warning";
     public const string Error = "Error";

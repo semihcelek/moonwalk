@@ -22,15 +22,17 @@ public sealed class ClaudeAgent(ClaudeOptions options) : IAgent
             args.Add("--model");
             args.Add(options.Model);
         }
-        if (options.AllowedTools.Length > 0)
+        var allowed = request.AllowedTools ?? options.AllowedTools;
+        var disallowed = request.DisallowedTools ?? options.DisallowedTools;
+        if (allowed.Length > 0)
         {
             args.Add("--allowedTools");
-            args.AddRange(options.AllowedTools);
+            args.AddRange(allowed);
         }
-        if (options.DisallowedTools.Length > 0)
+        if (disallowed.Length > 0)
         {
             args.Add("--disallowedTools");
-            args.AddRange(options.DisallowedTools);
+            args.AddRange(disallowed);
         }
         args.AddRange(options.ExtraArgs);
 

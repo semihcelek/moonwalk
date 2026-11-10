@@ -87,6 +87,24 @@ public sealed class ImplementStage : IStage
         sb.AppendLine("## Brief");
         sb.AppendLine(context.Brief);
         sb.AppendLine();
+
+        var specPath = Path.Combine(context.RunDir, "spec.md");
+        if (File.Exists(specPath))
+        {
+            var spec = File.ReadAllText(specPath);
+            sb.AppendLine("## Spec (acceptance criteria to satisfy)");
+            sb.AppendLine(spec.Length > 12000 ? spec[..12000] + "\n..." : spec);
+            sb.AppendLine();
+        }
+
+        sb.Append(context.PromptContext());
+        if (context.Attempt > 1)
+        {
+            sb.AppendLine("This is a retry. Earlier attempts may have left uncommitted changes in the working tree or commits on this branch.");
+            sb.AppendLine("Run `git status` and `git log --oneline -5` first and build on that work instead of starting over.");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## Rules");
         sb.AppendLine("- Make the smallest change that fully satisfies the brief. Do not touch files unrelated to it.");
         sb.AppendLine("- Do not run git commit, git push or git add. MoonWalk reviews and commits your work after it checks it.");

@@ -23,6 +23,11 @@ function h(tag, props = {}, ...kids) {
   return el;
 }
 
+/** replaceChildren that skips null, undefined and false instead of printing them as text. */
+function put(el, ...children) {
+  el.replaceChildren(...children.flat().filter((c) => c != null && c !== false));
+}
+
 const STATUS_LABEL = {
   Queued: 'Queued', Running: 'Running', WaitingForHuman: 'Needs you', Paused: 'Paused',
   Done: 'Done', Failed: 'Failed', Cancelled: 'Cancelled', Interrupted: 'Interrupted',
@@ -64,8 +69,23 @@ setInterval(() => {
 
 async function api(path, options) {
   const res = await fetch(path, options);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try { detail = (await res.json()).error ?? detail; } catch { /* no JSON body */ }
+    throw new Error(detail);
+  }
   return res.status === 202 || res.status === 204 ? null : res.json();
+}
+
+const post = (path, body) => api(path, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body ?? {}),
+});
+
+/** Runs an async action and shows the server's reason when it is refused. */
+async function attempt(action) {
+  try { await action(); } catch (err) { alert(err.message); }
 }
 
 /* ------------------------------------------------------------ global stream */
@@ -85,8 +105,15 @@ function startGlobalStream() {
   es.addEventListener('run', (e) => {
     const run = JSON.parse(e.data);
     runs.set(run.id, run);
+    updateTitle();
     onRunsChanged?.(run);
   });
+}
+
+/** "(2) MoonWalk" in the browser tab while runs are waiting for you. */
+function updateTitle() {
+  const waiting = [...runs.values()].filter((r) => r.status === 'WaitingForHuman').length;
+  document.title = waiting ? `(${waiting}) MoonWalk` : 'MoonWalk';
 }
 
 /* ------------------------------------------------------------------ router */
@@ -124,6 +151,7 @@ async function showBoard() {
 
   try {
     for (const r of await api('/api/runs')) runs.set(r.id, r);
+    updateTitle();
   } catch (err) {
     list.replaceChildren(h('div', { class: 'empty' }, h('strong', {}, 'Could not load runs'), String(err)));
     return;
@@ -134,7 +162,7 @@ async function showBoard() {
 
 function runRow(run) {
   const stage = run.currentStage ?? (run.status === 'Done' ? 'finished' : '');
-  return h('a', { class: 'run-row', href: `#/run/${encodeURIComponent(run.id)}` },
+  return h('a', { class: `run-row${run.status === 'WaitingForHuman' ? ' attn' : ''}`, href: `#/run/${encodeURIComponent(run.id)}` },
     h('div', {}, pill(run.status)),
     h('div', {}, h('div', { class: 'title' }, run.title), h('div', { class: 'meta' }, `${run.project} · ${run.id}`)),
     h('div', { class: 'meta hide-sm' }, stage),
@@ -159,15 +187,36 @@ async function showRun(id) {
     return;
   }
 
+  let agentNames = ['claude'];
+  try { agentNames = (await api('/api/agents')).agents; } catch { /* keep the default */ }
+
   const head = h('div', { class: 'run-head' });
   const facts = h('div', { class: 'facts' });
   const banner = h('div');
+  const decisionBox = h('div');
   const stagesBox = h('div', { class: 'stages' });
   const briefBox = h('div', { class: 'brief-box' }, h('b', {}, 'Brief'), run.brief);
   const errorSlot = h('div');
   const feed = h('div', { class: 'feed', role: 'log', 'aria-live': 'off' });
   const jump = h('button', { class: 'jump', type: 'button', hidden: true }, 'Jump to latest ↓');
   const count = h('span', { class: 'count' }, '0 events');
+  const tabs = h('div', { class: 'tabs', role: 'tablist' });
+  const artifactView = h('pre', { class: 'artifact', hidden: true });
+
+  // Guidance notes: the inputs persist across re-renders so typing is never lost.
+  const noteInput = h('textarea', { rows: 2, placeholder: 'Add a note for the agents (applies to the next agent stage or retry)' });
+  const noteList = h('div', { class: 'notes' });
+  const guidanceBox = h('div', { class: 'guidance' },
+    h('b', {}, 'Guidance'), noteList, noteInput,
+    h('button', {
+      class: 'btn small', type: 'button',
+      onclick: () => attempt(async () => {
+        const text = noteInput.value.trim();
+        if (!text) return;
+        await post(`/api/runs/${encodeURIComponent(id)}/guidance`, { text });
+        noteInput.value = '';
+      }),
+    }, 'Add note'));
 
   const filters = { text: true, tool: true, system: true };
   const chips = Object.keys(filters).map((key) => {
@@ -180,20 +229,107 @@ async function showRun(id) {
     return chip;
   });
 
+  const chipsBox = h('div', { class: 'chips' }, chips);
+
   view.replaceChildren(
     h('div', { class: 'run-head' }, h('a', { class: 'back', href: '#/' }, '← Runs')),
-    head, facts, banner,
+    head, facts, banner, decisionBox,
     h('div', { class: 'run-grid' },
-      h('section', { class: 'panel' }, h('h2', {}, 'Stages'), stagesBox, errorSlot, briefBox),
+      h('section', { class: 'panel side' }, h('h2', {}, 'Stages'), stagesBox, errorSlot, guidanceBox, briefBox),
       h('section', { class: 'panel' },
-        h('div', { class: 'feed-bar' }, h('h2', {}, 'Live feed'), chips, count),
-        feed, jump)));
+        h('div', { class: 'feed-bar' }, tabs, chipsBox, count),
+        feed, artifactView, jump)));
+
+  /* tabs: the live feed plus any artifact the run produced (spec, verify log, handover) */
+  let activeTab = 'feed';
+  let tabKey = '';
+  let artifactFor = '';
+
+  const showTab = (name, r) => {
+    activeTab = name;
+    const isFeed = name === 'feed';
+    feed.hidden = !isFeed;
+    chipsBox.hidden = !isFeed;
+    count.hidden = !isFeed;
+    artifactView.hidden = isFeed;
+    if (!isFeed) jump.hidden = true;
+    for (const t of tabs.children) t.setAttribute('aria-selected', String(t.dataset.tab === name));
+    if (!isFeed) loadArtifact(name, r?.updatedAt);
+  };
+
+  const loadArtifact = async (name, stamp) => {
+    const key = `${name}@${stamp}`;
+    if (artifactFor === key) return;
+    artifactFor = key;
+    try {
+      const res = await fetch(`/api/runs/${encodeURIComponent(id)}/files/${name.split('/').map(encodeURIComponent).join('/')}`);
+      artifactView.textContent = res.ok ? await res.text() : `Could not load ${name} (${res.status}).`;
+    } catch (err) {
+      artifactView.textContent = `Could not load ${name}: ${err.message}`;
+    }
+  };
+
+  const renderTabs = (r) => {
+    const names = ['feed', ...(r.artifacts ?? [])];
+    const key = names.join('|');
+    if (key !== tabKey) {
+      tabKey = key;
+      tabs.replaceChildren(...names.map((n) => h('button', {
+        class: 'tab', type: 'button', role: 'tab', 'data-tab': n,
+        onclick: () => showTab(n, runs.get(id)),
+      }, n === 'feed' ? 'Live feed' : n.replace(/^evidence\//, ''))));
+      if (!names.includes(activeTab)) activeTab = 'feed';
+    }
+    showTab(activeTab, r);
+  };
+
+  /* controls and the decision card */
+  let waitKey = '';
+
+  const renderDecision = (r) => {
+    const w = r.status === 'WaitingForHuman' ? r.waiting : null;
+    const key = w ? `${w.stage}|${w.reason}|${r.stages.map((s) => s.status).join(',')}` : '';
+    if (key === waitKey) return;
+    waitKey = key;
+    if (!w) { decisionBox.replaceChildren(); return; }
+
+    const note = h('textarea', { rows: 2, placeholder: 'Optional note. It is added to the guidance and sent to the agent on retry.' });
+    // After a playtest, feedback usually means changing the code again: default to Implement. Otherwise redo the stage that is waiting.
+    const retryDefault = w.reason === 'Review' && r.stages.some((s) => s.name === 'Implement') ? 'Implement' : w.stage;
+    const retryFrom = h('select', {}, r.stages.map((s) => h('option', { value: s.name, selected: s.name === retryDefault }, s.name)));
+    const agent = h('select', {}, agentNames.map((a) => h('option', { value: a, selected: a === r.agent }, a)));
+    const decide = (action, extra = {}) => attempt(() => post(`/api/runs/${encodeURIComponent(id)}/decision`, { action, note: note.value.trim() || null, ...extra }));
+    const attention = { Gate: 'Review needed', Review: 'Your turn', Failed: 'Stage failed', Blocked: 'Stage blocked' }[w.reason] ?? 'Needs you';
+
+    decisionBox.replaceChildren(h('div', { class: `decision r-${w.reason.toLowerCase()}` },
+      h('div', { class: 'decision-head' }, h('b', {}, attention), h('span', { class: 'muted' }, ` · ${w.stage}`)),
+      h('div', { class: 'decision-msg' }, w.message),
+      note,
+      h('div', { class: 'decision-row' },
+        w.canApprove && h('button', { class: 'btn primary', type: 'button', onclick: () => decide('approve') },
+          r.stages[r.stages.length - 1].name === w.stage ? 'Approve and finish' : 'Approve and continue'),
+        h('label', { class: 'inline' }, 'Retry from', retryFrom),
+        h('label', { class: 'inline' }, 'with', agent),
+        h('button', { class: 'btn', type: 'button', onclick: () => decide('retry', { retryFrom: retryFrom.value, agent: agent.value }) }, 'Retry'),
+        h('button', { class: 'btn danger', type: 'button', onclick: () => decide('stop') }, 'Stop run'))));
+  };
 
   const renderRun = (r) => {
-    head.replaceChildren(
+    const live = ['Queued', 'Running', 'Paused', 'WaitingForHuman'].includes(r.status);
+    const canPause = ['Queued', 'Running'].includes(r.status) && !r.pauseRequested;
+    put(head,
       h('h1', {}, r.title), pill(r.status),
-      isActive(r.status) && h('button', { class: 'btn danger small', type: 'button', onclick: () => cancelRun(r.id) }, 'Cancel run'));
-    facts.replaceChildren(
+      r.pauseRequested && r.status === 'Running' && h('span', { class: 'muted' }, 'pausing before next stage…'),
+      canPause && h('button', { class: 'btn small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/pause`)) }, 'Pause'),
+      (r.status === 'Paused' || (r.pauseRequested && r.status === 'Running')) &&
+        h('button', { class: 'btn primary small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/resume`)) }, r.status === 'Paused' ? 'Resume' : 'Cancel pause'),
+      live && h('button', { class: 'btn danger small', type: 'button', onclick: () => cancelRun(r.id) }, 'Cancel run'));
+    guidanceBox.hidden = !live;
+    noteList.replaceChildren(...(r.guidance ?? []).map((g) =>
+      h('div', { class: 'note' }, h('span', { class: 'note-t' }, `${fmtClock(g.time)}${g.stage ? ' · ' + g.stage : ''}`), g.text)));
+    renderDecision(r);
+    renderTabs(r);
+    put(facts,
       h('span', {}, 'Project ', h('b', {}, r.project)),
       h('span', {}, 'Run ', h('b', {}, r.id)),
       r.agent && h('span', {}, 'Agent ', h('b', {}, r.agent)),
@@ -201,10 +337,13 @@ async function showRun(id) {
       r.commit && h('span', {}, 'Commit ', h('b', {}, r.commit)),
       r.costUsd != null && h('span', {}, 'Cost ', h('b', {}, `$${r.costUsd.toFixed(3)}`)),
       h('span', {}, 'Elapsed ', h('b', {}, duration(r.createdAt, isActive(r.status) ? null : r.finishedAt ?? r.updatedAt))));
+    const releasable = r.workspaceHeld && !['Queued', 'Running', 'Paused', 'WaitingForHuman'].includes(r.status);
     banner.replaceChildren(...(r.workspaceHeld ? [h('div', { class: 'notice' },
       h('div', {}, h('b', {}, 'Workspace held. '),
-        `The repository is on ${r.branch}. Play or review it there, then release to switch back to ${r.returnTo}. The next run for this project waits until you do.`),
-      h('button', { class: 'btn primary small', type: 'button', onclick: () => releaseRun(r.id) }, 'Release workspace'))] : []));
+        `The repository is on ${r.branch}. Play or review it there` +
+          (releasable ? `, then release to switch back to ${r.returnTo}. The next run for this project waits until you do.`
+            : `. When this run is finished you can release it to switch back to ${r.returnTo}.`)),
+      releasable && h('button', { class: 'btn primary small', type: 'button', onclick: () => releaseRun(r.id) }, 'Release workspace'))] : []));
     stagesBox.replaceChildren(...r.stages.map((s) =>
       h('div', { class: `stage s-${s.status.toLowerCase()}` },
         h('span', { class: 'node' }),
@@ -224,7 +363,7 @@ async function showRun(id) {
   const atBottom = () => feed.scrollHeight - feed.scrollTop - feed.clientHeight < 48;
   feed.addEventListener('scroll', () => {
     follow = atBottom();
-    jump.hidden = follow;
+    jump.hidden = follow || activeTab !== 'feed';
   });
   jump.addEventListener('click', () => { follow = true; jump.hidden = true; feed.scrollTop = feed.scrollHeight; });
 
@@ -294,15 +433,9 @@ async function showRun(id) {
   currentRunView = { close: () => es.close() };
 }
 
-async function cancelRun(id) {
-  try { await api(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }); }
-  catch (err) { alert(`Could not cancel: ${err.message}`); }
-}
+const cancelRun = (id) => attempt(() => post(`/api/runs/${encodeURIComponent(id)}/cancel`));
 
-async function releaseRun(id) {
-  try { await api(`/api/runs/${encodeURIComponent(id)}/release`, { method: 'POST' }); }
-  catch (err) { alert(`Could not release the workspace: ${err.message}`); }
-}
+const releaseRun = (id) => attempt(() => post(`/api/runs/${encodeURIComponent(id)}/release`));
 
 /* --------------------------------------------------------------- new run */
 

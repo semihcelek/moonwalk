@@ -22,10 +22,12 @@ public sealed class RunStore
             {
                 continue;
             }
-            if (run.Status is RunStatus.Queued or RunStatus.Running)
+            if (run.Status is RunStatus.Queued or RunStatus.Running or RunStatus.Paused or RunStatus.WaitingForHuman)
             {
                 run.Status = RunStatus.Interrupted;
-                run.Error = "MoonWalk stopped while this run was in progress.";
+                run.Error = "MoonWalk stopped while this run was in progress. If it still holds the workspace, release it from the run page.";
+                run.Waiting = null;
+                run.PauseRequested = false;
                 Save(run);
             }
             _runs[run.Id] = run;

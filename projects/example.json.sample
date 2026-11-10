@@ -12,7 +12,18 @@
   "dirtyPolicy": "refuse",
 
   "agent": "claude",
-  "stages": ["Implement"],
+
+  // Spec: read-only agent writes acceptance criteria. Implement: agent changes the code, MoonWalk commits it.
+  // Verify: runs the commands below. Handover: writes a summary and waits for you to play the result.
+  "stages": ["Spec", "Implement", "Verify", "Handover"],
+
+  // The run pauses after these stages until you approve, redo with a note, or stop.
+  "gates": ["Spec"],
+
+  // Commands for the Verify stage (no shell: command plus arguments). They run in repoPath and stop at the first failure.
+  "verify": [
+    { "name": "compile", "command": "dotnet", "args": ["build", "-nologo"], "timeoutMinutes": 10 }
+  ],
 
   // Extra rules appended to the agent prompt.
   "extraInstructions": [

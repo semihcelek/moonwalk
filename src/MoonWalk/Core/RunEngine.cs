@@ -6,18 +6,37 @@ using MoonWalk.Workspace;
 
 namespace MoonWalk.Core;
 
+/// <summary>What the person decided while a run was waiting: approve, retry (optionally from an earlier stage, with another agent), or stop.</summary>
+public sealed record DecisionRequest(string Action, string? Note = null, string? Agent = null, string? RetryFrom = null);
+
 /// <summary>
-/// Runs a pipeline stage by stage in the background, recording state and emitting events as it goes.
-/// In branch workspace mode only one run per project may own the working folder: others wait as Queued. A run that
-/// finishes successfully keeps the folder (the repo stays on its branch so it can be played) until it is released.
+/// Runs a pipeline stage by stage in the background, recording state and emitting events as it goes. A run waits for a
+/// decision at configured gates, after a stage that asks for a human, and after a failed or blocked stage (retry or stop).
+/// In branch workspace mode only one run per project may own the working folder: others wait as Queued. A run that finishes
+/// successfully keeps the folder (the repository stays on its branch so it can be played) until it is released.
 /// </summary>
 public sealed class RunEngine
 {
+    private sealed class RunControl(CancellationTokenSource cts, IReadOnlyList<string> stageNames)
+    {
+        public CancellationTokenSource Cts { get; } = cts;
+
+        public IReadOnlyList<string> StageNames { get; } = stageNames;
+
+        public bool PauseRequested { get; set; }
+
+        public TaskCompletionSource? Resume { get; set; }
+
+        public TaskCompletionSource<DecisionRequest>? Decision { get; set; }
+
+        public WaitState? Waiting { get; set; }
+    }
+
     private readonly RunStore _store;
     private readonly EventHub _hub;
     private readonly ProjectRegistry _projects;
     private readonly string _runsRoot;
-    private readonly ConcurrentDictionary<string, CancellationTokenSource> _active = new();
+    private readonly ConcurrentDictionary<string, RunControl> _controls = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _holders = new(StringComparer.OrdinalIgnoreCase);
 
@@ -37,6 +56,8 @@ public sealed class RunEngine
             }
         }
     }
+
+    /* ------------------------------------------------------------ starting */
 
     public Run Start(string brief, string projectName)
     {
@@ -61,20 +82,113 @@ public sealed class RunEngine
         };
         _store.Add(run);
 
-        var cts = new CancellationTokenSource();
-        _active[run.Id] = cts;
-        _ = Task.Run(() => ExecuteAsync(run.Id, brief, profile, stages, cts));
+        var control = new RunControl(new CancellationTokenSource(), stages.Select(s => s.Name).ToList());
+        _controls[run.Id] = control;
+        _ = Task.Run(() => ExecuteAsync(run.Id, brief, profile, stages, control));
         return run;
     }
 
+    /* ------------------------------------------------------------ controls */
+
     public bool Cancel(string id)
     {
-        if (!_active.TryGetValue(id, out var cts))
+        if (!_controls.TryGetValue(id, out var control))
         {
             return false;
         }
-        cts.Cancel();
+        control.Cts.Cancel();
         return true;
+    }
+
+    /// <summary>Asks the run to pause before its next stage (an agent in the middle of a stage is not interrupted).</summary>
+    public (bool Ok, string Message) Pause(string id)
+    {
+        if (!_controls.TryGetValue(id, out var control))
+        {
+            return (false, "The run is not active.");
+        }
+        lock (control)
+        {
+            if (control.Waiting is not null)
+            {
+                return (false, "The run is already waiting for you.");
+            }
+            control.PauseRequested = true;
+        }
+        _store.Update(id, r => r.PauseRequested = true);
+        _hub.Append(id, EventTypes.Paused, null, "Pause requested: the run will pause before its next stage.");
+        return (true, "Pause requested.");
+    }
+
+    public (bool Ok, string Message) Resume(string id)
+    {
+        if (!_controls.TryGetValue(id, out var control))
+        {
+            return (false, "The run is not active.");
+        }
+        lock (control)
+        {
+            control.PauseRequested = false;
+            control.Resume?.TrySetResult();
+        }
+        _store.Update(id, r => r.PauseRequested = false);
+        return (true, "Resumed.");
+    }
+
+    /// <summary>Adds a note that every later agent prompt in this run will include.</summary>
+    public (bool Ok, string Message) AddGuidance(string id, string text)
+    {
+        if (!_controls.ContainsKey(id))
+        {
+            return (false, "The run is not active.");
+        }
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return (false, "The note is empty.");
+        }
+        AddGuidanceNote(id, text.Trim());
+        return (true, "Note added. It applies to the next agent stage or retry.");
+    }
+
+    public (bool Ok, string Message) Decide(string id, DecisionRequest request)
+    {
+        if (!_controls.TryGetValue(id, out var control))
+        {
+            return (false, "The run is not active.");
+        }
+
+        lock (control)
+        {
+            if (control.Decision is null || control.Waiting is null)
+            {
+                return (false, "The run is not waiting for a decision.");
+            }
+
+            var action = request.Action?.Trim().ToLowerInvariant();
+            switch (action)
+            {
+                case "approve" when !control.Waiting.CanApprove:
+                    return (false, $"Stage '{control.Waiting.Stage}' did not pass, so it cannot be approved. Retry it or stop the run.");
+                case "approve":
+                case "stop":
+                    break;
+                case "retry":
+                    if (request.RetryFrom is { Length: > 0 } from && !control.StageNames.Contains(from, StringComparer.OrdinalIgnoreCase))
+                    {
+                        return (false, $"Unknown stage '{from}'.");
+                    }
+                    if (request.Agent is { Length: > 0 } agent && !AgentFactory.IsKnown(agent))
+                    {
+                        return (false, $"Unknown agent '{agent}'.");
+                    }
+                    break;
+                default:
+                    return (false, "Action must be approve, retry or stop.");
+            }
+
+            control.Decision.TrySetResult(request with { Action = action! });
+        }
+        return (true, "Decision recorded.");
     }
 
     /// <summary>Gives the working folder back: the repository returns to the branch it was on before the run.</summary>
@@ -84,6 +198,10 @@ public sealed class RunEngine
         if (run is null)
         {
             return (false, "Run not found.");
+        }
+        if (_controls.ContainsKey(id))
+        {
+            return (false, "The run is still active. Approve, stop or cancel it first.");
         }
         if (!run.WorkspaceHeld)
         {
@@ -122,10 +240,12 @@ public sealed class RunEngine
         return (true, $"Back on '{state.ReturnTo}'.");
     }
 
-    private async Task ExecuteAsync(string id, string brief, ProjectProfile profile, IReadOnlyList<IStage> stages, CancellationTokenSource cts)
+    /* ----------------------------------------------------------- execution */
+
+    private async Task ExecuteAsync(string id, string brief, ProjectProfile profile, IReadOnlyList<IStage> stages, RunControl control)
     {
         var runDir = Path.Combine(_runsRoot, id);
-        var ct = cts.Token;
+        var ct = control.Cts.Token;
         var usesWorkspace = !profile.IsDemo && profile.Workspace == WorkspaceMode.Branch;
 
         var lockHeld = false;
@@ -165,26 +285,63 @@ public sealed class RunEngine
                 {
                     r.Branch = state.Branch;
                     r.ReturnTo = state.ReturnTo;
+                    r.WorkspaceHeld = true;
                 });
             }
 
-            var agent = profile.IsDemo ? null : AgentFactory.Create(profile);
+            var attempts = new Dictionary<string, int>();
+            string? previousFailure = null;
+            var agentName = profile.Agent;
+            var index = 0;
 
-            foreach (var stage in stages)
+            while (index < stages.Count)
             {
-                currentStage = stage.Name;
                 ct.ThrowIfCancellationRequested();
+                await PauseIfRequestedAsync(id, control, ct);
+
+                var stage = stages[index];
+                currentStage = stage.Name;
+                attempts[stage.Name] = attempts.GetValueOrDefault(stage.Name) + 1;
+
                 _store.Update(id, r =>
                 {
                     r.CurrentStage = stage.Name;
                     var record = r.Stages.First(s => s.Name == stage.Name);
                     record.Status = StageStatus.Running;
                     record.StartedAt = DateTimeOffset.Now;
+                    record.FinishedAt = null;
+                    record.Summary = null;
                 });
-                _hub.Append(id, EventTypes.StageStarted, stage.Name, $"Stage {stage.Name} started.");
+                _hub.Append(id, EventTypes.StageStarted, stage.Name,
+                    attempts[stage.Name] > 1 ? $"Stage {stage.Name} started (attempt {attempts[stage.Name]})." : $"Stage {stage.Name} started.");
 
-                var context = new StageContext(id, brief, runDir, stage.Name, _hub, profile, session, agent, mutate => _store.Update(id, mutate));
-                var result = await stage.RunAsync(context, ct);
+                var context = new StageContext
+                {
+                    RunId = id,
+                    Brief = brief,
+                    RunDir = runDir,
+                    StageName = stage.Name,
+                    Hub = _hub,
+                    Profile = profile,
+                    UpdateRunAction = mutate => _store.Update(id, mutate),
+                    GetRunFunc = () => _store.Get(id),
+                    Workspace = session,
+                    Agent = profile.IsDemo ? null : AgentFactory.Create(agentName, profile),
+                    Attempt = attempts[stage.Name],
+                    Guidance = _store.Get(id)!.Guidance.Select(g => g.Text).ToList(),
+                    PreviousFailure = previousFailure,
+                };
+
+                StageResult result;
+                try
+                {
+                    result = await stage.RunAsync(context, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _hub.Append(id, EventTypes.Error, stage.Name, ex.Message);
+                    result = StageResult.Failed(ex.Message);
+                }
 
                 _store.Update(id, r =>
                 {
@@ -194,14 +351,103 @@ public sealed class RunEngine
                     record.Summary = result.Summary;
                 });
                 _hub.Append(id, EventTypes.StageFinished, stage.Name, result.Summary,
-                    new() { ["outcome"] = result.Outcome.ToString() });
+                    new() { ["outcome"] = result.Outcome.ToString(), ["attempt"] = attempts[stage.Name] });
 
-                if (result.Outcome != StageOutcome.Passed)
+                WaitState? wait;
+                switch (result.Outcome)
                 {
-                    status = result.Outcome == StageOutcome.NeedsHuman ? RunStatus.WaitingForHuman : RunStatus.Failed;
-                    error = result.Outcome == StageOutcome.NeedsHuman ? null : result.Summary;
+                    case StageOutcome.Passed when profile.Gates.Contains(stage.Name, StringComparer.OrdinalIgnoreCase):
+                        previousFailure = null;
+                        wait = new WaitState
+                        {
+                            Stage = stage.Name,
+                            Reason = "Gate",
+                            Message = $"{stage.Name} finished. Review it, then approve to continue, or redo it with a note.",
+                            CanApprove = true,
+                        };
+                        break;
+                    case StageOutcome.Passed:
+                        previousFailure = null;
+                        index++;
+                        continue;
+                    case StageOutcome.NeedsHuman:
+                        wait = new WaitState { Stage = stage.Name, Reason = "Review", Message = result.Summary ?? "Waiting for you.", CanApprove = true };
+                        break;
+                    default:
+                        previousFailure = result.Summary;
+                        wait = new WaitState
+                        {
+                            Stage = stage.Name,
+                            Reason = result.Outcome == StageOutcome.Blocked ? "Blocked" : "Failed",
+                            Message = result.Summary ?? "The stage did not pass.",
+                            CanApprove = false,
+                        };
+                        break;
+                }
+
+                var decision = await WaitForDecisionAsync(id, control, wait, ct);
+                _store.Update(id, r =>
+                {
+                    r.Status = RunStatus.Running;
+                    r.Waiting = null;
+                    r.CurrentStage = stage.Name;
+                });
+
+                if (!string.IsNullOrWhiteSpace(decision.Note))
+                {
+                    AddGuidanceNote(id, decision.Note.Trim(), stage.Name);
+                }
+
+                if (decision.Action == "stop")
+                {
+                    _hub.Append(id, EventTypes.Decision, stage.Name, "Run stopped by you.");
+                    status = RunStatus.Cancelled;
+                    error = "Stopped by user.";
                     break;
                 }
+
+                if (decision.Action == "approve")
+                {
+                    _hub.Append(id, EventTypes.Decision, stage.Name, $"Approved {stage.Name}.");
+                    previousFailure = null;
+                    _store.Update(id, r =>
+                    {
+                        var record = r.Stages.First(s => s.Name == stage.Name);
+                        if (record.Status == StageStatus.NeedsHuman)
+                        {
+                            record.Status = StageStatus.Passed;
+                        }
+                    });
+                    index++;
+                    continue;
+                }
+
+                // retry
+                if (!string.IsNullOrWhiteSpace(decision.Agent) && !string.Equals(decision.Agent, agentName, StringComparison.OrdinalIgnoreCase))
+                {
+                    agentName = decision.Agent;
+                    _store.Update(id, r => r.Agent = agentName);
+                }
+                var target = decision.RetryFrom is { Length: > 0 } from
+                    ? stages.Select(s => s.Name).ToList().FindIndex(n => string.Equals(n, from, StringComparison.OrdinalIgnoreCase))
+                    : index;
+                if (target < 0)
+                {
+                    target = index;
+                }
+                _hub.Append(id, EventTypes.Decision, stage.Name,
+                    $"Retrying from {stages[target].Name}" + (agentName != profile.Agent ? $" with agent {agentName}." : "."));
+                _store.Update(id, r =>
+                {
+                    for (var i = target; i < r.Stages.Count; i++)
+                    {
+                        r.Stages[i].Status = StageStatus.Pending;
+                        r.Stages[i].StartedAt = null;
+                        r.Stages[i].FinishedAt = null;
+                        r.Stages[i].Summary = null;
+                    }
+                });
+                index = target;
             }
         }
         catch (OperationCanceledException)
@@ -227,13 +473,90 @@ public sealed class RunEngine
 
         await SettleWorkspaceAsync(id, profile, runDir, session, lockHeld, status);
         Finish(id, status, error);
-        _active.TryRemove(id, out _);
-        cts.Dispose();
+        _controls.TryRemove(id, out _);
+        control.Cts.Dispose();
+    }
+
+    private async Task PauseIfRequestedAsync(string id, RunControl control, CancellationToken ct)
+    {
+        TaskCompletionSource? resume = null;
+        lock (control)
+        {
+            if (control.PauseRequested)
+            {
+                resume = control.Resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        }
+        if (resume is null)
+        {
+            return;
+        }
+
+        _store.Update(id, r => r.Status = RunStatus.Paused);
+        _hub.Append(id, EventTypes.Paused, null, "Run paused. Resume it when you are ready.");
+        using var registration = ct.Register(() => resume.TrySetCanceled(ct));
+        try
+        {
+            await resume.Task;
+        }
+        finally
+        {
+            lock (control)
+            {
+                control.Resume = null;
+            }
+        }
+        _store.Update(id, r =>
+        {
+            r.Status = RunStatus.Running;
+            r.PauseRequested = false;
+        });
+        _hub.Append(id, EventTypes.Resumed, null, "Run resumed.");
+    }
+
+    private async Task<DecisionRequest> WaitForDecisionAsync(string id, RunControl control, WaitState wait, CancellationToken ct)
+    {
+        var decision = new TaskCompletionSource<DecisionRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (control)
+        {
+            control.PauseRequested = false;
+            control.Decision = decision;
+            control.Waiting = wait;
+        }
+
+        _store.Update(id, r =>
+        {
+            r.Status = RunStatus.WaitingForHuman;
+            r.Waiting = wait;
+            r.PauseRequested = false;
+        });
+        _hub.Append(id, EventTypes.WaitingForHuman, wait.Stage, $"Waiting for you ({wait.Reason}): {wait.Message}",
+            new() { ["reason"] = wait.Reason, ["canApprove"] = wait.CanApprove });
+
+        using var registration = ct.Register(() => decision.TrySetCanceled(ct));
+        try
+        {
+            return await decision.Task;
+        }
+        finally
+        {
+            lock (control)
+            {
+                control.Decision = null;
+                control.Waiting = null;
+            }
+        }
+    }
+
+    private void AddGuidanceNote(string id, string text, string? stage = null)
+    {
+        _store.Update(id, r => r.Guidance.Add(new GuidanceNote { Text = text, Stage = stage ?? r.CurrentStage }));
+        _hub.Append(id, EventTypes.Guidance, stage, text);
     }
 
     /// <summary>
-    /// A finished or waiting run keeps the workspace so the result can be played. Anything else keeps its partial work as a local
-    /// wip commit, puts the repository back where it was, and frees the project for the next run.
+    /// A successful run keeps the workspace so the result can be played. Anything else keeps its partial work as a local wip commit,
+    /// puts the repository back where it was, and frees the project for the next run.
     /// </summary>
     private async Task SettleWorkspaceAsync(string id, ProjectProfile profile, string runDir, WorkspaceSession? session, bool lockHeld, RunStatus status)
     {
@@ -242,9 +565,8 @@ public sealed class RunEngine
             return;
         }
 
-        if (session is not null && status is RunStatus.Done or RunStatus.WaitingForHuman)
+        if (session is not null && status == RunStatus.Done)
         {
-            _store.Update(id, r => r.WorkspaceHeld = true);
             _hub.Append(id, EventTypes.System, null,
                 $"Workspace kept: the repository is on '{session.State.Branch}'. Release it when you are done to return to '{session.State.ReturnTo}'.");
             return;
@@ -256,6 +578,14 @@ public sealed class RunEngine
             _hub.Append(id, warning is null ? EventTypes.System : EventTypes.Warning,
                 null,
                 warning ?? $"Partial work (if any) kept on local branch '{session.State.Branch}'; repository restored to '{session.State.ReturnTo}'.");
+            if (warning is null)
+            {
+                _store.Update(id, r => r.WorkspaceHeld = false);
+            }
+            else
+            {
+                return; // still on the run branch: keep the lock so nothing else starts on top of it
+            }
         }
         ReleaseLock(profile.Name, id);
     }
@@ -277,6 +607,8 @@ public sealed class RunEngine
         {
             r.Status = status;
             r.Error = error;
+            r.Waiting = null;
+            r.PauseRequested = false;
             if (!Run.IsActive(status))
             {
                 r.FinishedAt = DateTimeOffset.Now;

@@ -1,0 +1,78 @@
+using MoonWalk.Agents;
+using MoonWalk.Core;
+
+namespace MoonWalk.Pipeline.Stages;
+
+/// <summary>
+/// Turns the brief into a short spec with testable acceptance criteria. The agent gets read-only tools and answers with the
+/// spec text; MoonWalk saves it as spec.md in the run folder (never in the repository). Later stages and the reviewer use it.
+/// </summary>
+public sealed class SpecStage : IStage
+{
+    private static readonly string[] ReadOnlyTools = ["Read", "Grep", "Glob"];
+    // Claude Code auto-approves read-only shell commands, so shells are blocked outright to make "read-only" absolute.
+    private static readonly string[] NoWriteTools = ["Edit", "Write", "NotebookEdit", "Bash", "PowerShell"];
+
+    public string Name => "Spec";
+
+    public async Task<StageResult> RunAsync(StageContext context, CancellationToken ct)
+    {
+        var agent = context.Agent ?? throw new InvalidOperationException("Spec needs an agent.");
+        context.SetStageAgent(agent.Name);
+        context.Emit(EventTypes.System, $"Running {agent.Name} read-only to write the spec.");
+
+        var result = await agent.RunAsync(
+            new AgentRequest(BuildPrompt(context), context.Profile.RepoPath, ReadOnlyTools, NoWriteTools),
+            context.Emit,
+            ct);
+
+        if (result.CostUsd is { } cost)
+        {
+            context.AddCost(cost);
+        }
+
+        if (result.TimedOut)
+        {
+            return StageResult.Failed($"The agent timed out after {context.Profile.Claude.TimeoutMinutes} minutes.");
+        }
+        if (result.ExitCode != 0 || result.IsError)
+        {
+            return StageResult.Failed($"The agent failed (exit {result.ExitCode}).");
+        }
+        if (string.IsNullOrWhiteSpace(result.Text))
+        {
+            return StageResult.Failed("The agent returned no spec.");
+        }
+
+        context.WriteArtifact("spec.md", result.Text.Trim() + Environment.NewLine);
+        context.Emit(EventTypes.System, $"Spec written ({result.Text.Length} characters).");
+
+        var firstLine = result.Text.Split('\n').Select(l => l.Trim().TrimStart('#', ' ')).FirstOrDefault(l => l.Length > 0) ?? "Spec";
+        return StageResult.Passed(firstLine.Length > 160 ? firstLine[..160] + "..." : firstLine);
+    }
+
+    private static string BuildPrompt(StageContext context)
+    {
+        return $"""
+            You are writing a short spec for a change in the repository at the current working directory (project "{context.Profile.Name}"). You may read the code but must not change anything.
+
+            ## Brief
+            {context.Brief}
+
+            {context.PromptContext()}## Task
+            Read what you need, then reply with ONLY the spec in Markdown, using exactly these sections:
+
+            # <short title>
+            ## Goal
+            One or two sentences.
+            ## Acceptance criteria
+            A numbered list. Each item must be observable and testable by playing or checking the result, not a description of code.
+            ## Out of scope
+            What this change deliberately does not do.
+            ## Where it likely lives
+            The files or folders that probably need to change.
+
+            Keep it under 60 lines. Do not edit any file.
+            """;
+    }
+}
