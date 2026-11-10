@@ -78,6 +78,23 @@ public sealed class AgyOptions
     public string[] ExtraArgs { get; set; } = [];
 }
 
+public sealed class MuseOptions
+{
+    public string Path { get; set; } = "muse";
+
+    public string? Model { get; set; }
+
+    public int TimeoutMinutes { get; set; } = 45;
+
+    /// <summary>Let Muse run shell commands (inside its own sandbox). Off by default, so it cannot run git commit or push; its file tools still work.</summary>
+    public bool AllowShell { get; set; }
+
+    /// <summary>Load the workspace's own Muse skills and rules (<c>--trust-workspace</c>). Off by default.</summary>
+    public bool TrustWorkspace { get; set; }
+
+    public string[] ExtraArgs { get; set; } = [];
+}
+
 public sealed class VerifyStep
 {
     public string Name { get; set; } = "";
@@ -118,6 +135,8 @@ public sealed class ProjectProfile
     public ClaudeOptions Claude { get; set; } = new();
 
     public AgyOptions Agy { get; set; } = new();
+
+    public MuseOptions Muse { get; set; } = new();
 
     /// <summary>Worktree mode only: the folder that holds the per-run worktrees. Default: <c>wt-moonwalk</c> beside the repository.</summary>
     public string? WorktreeRoot { get; set; }

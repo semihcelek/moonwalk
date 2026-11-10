@@ -44,14 +44,18 @@ installed and which projects have problems.
 |---|---|---|
 | `claude` | Claude Code CLI (built in) | Streamed text, every tool call and result, cost |
 | `agy` | Gemini through the Antigravity CLI (built in) | Streamed text, every tool call and result, token usage |
-| any name in `agents.json` | A command line tool that takes a prompt and edits files (see `agents.json.sample`, e.g. Muse) | Its output, line by line |
+| `muse` | Muse Code by Meta (built in) | Streamed text, every tool call and result (with file edits), token usage |
+| any name in `agents.json` | A command line tool that takes a prompt and edits files (see `agents.json.sample`) | Its output, line by line |
 
 Notes:
+- **Muse** runs as `muse exec --json` with its own approval and sandbox left on. The shell is off by default
+  (`muse.allowShell` opts in), and the Spec stage adds `--disable-write --disable-shell`. The workspace's own Muse rules and
+  skills are not loaded unless `muse.trustWorkspace` is true. Muse takes about a minute for a one-line change.
 - **agy runs headless**, where it cannot ask for permission, and a denied shell command ends its session. By default MoonWalk
   allows none and tells it to use file tools only; `agy.allowedCommands` in the profile opts in (`["*"]` also lets it run
   `git commit` and `git push`, so only use that if you accept it).
-- Only Claude can be held to a tool list. For `agy` and generic agents MoonWalk asks for read-only in the Spec stage (agy plan
-  mode) and then **verifies** that no file changed.
+- Only Claude can be held to a tool list. For the others MoonWalk asks for read-only in the Spec stage (agy plan mode, Muse
+  `--disable-write`) and then **verifies** that no file changed.
 - A retry can switch agent ("retry from Implement with agy"), so you can compare agents on the same run.
 
 ## How a run works (branch workspace)
@@ -120,4 +124,4 @@ The browser tab title shows `(n)` while runs wait for you, and those rows are hi
 4. agy and generic CLI agents, agent health and Settings page, recovery of interrupted runs, worktree mode (done)
 
 Ideas not built: killing agent processes when MoonWalk itself is killed (a Windows job object), notifications beyond the tab
-title, a dedicated adapter for Muse's JSON output, a playtest stage.
+title, a playtest stage.

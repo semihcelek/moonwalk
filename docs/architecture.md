@@ -154,13 +154,14 @@ diagnostics. `CliProcess` spawns the CLI (prompt on stdin unless the adapter pas
 line by line, and kills the whole process tree on cancel or timeout. It also resolves commands the way a shell does (PATH plus
 PATHEXT), so `muse` finds `muse.cmd`.
 
-`AgentRegistry` knows the built-in `claude` and `agy` plus the CLI agents in `agents.json`, creates adapters by name, and runs
+`AgentRegistry` knows the built-in `claude`, `agy` and `muse` plus the CLI agents in `agents.json`, creates adapters by name, and runs
 each agent's version command (15 s limit, default command names) for the health check. Profiles are validated against it.
 
 | Agent | Adapter | Notes |
 |---|---|---|
 | `claude` | `ClaudeAgent` + `ClaudeStreamParser` | Honours tool allow/deny lists |
 | `agy` | `AgyAgent` + `AgyStreamParser` | Gemini via Antigravity; details below |
+| `muse` | `MuseAgent` + `MuseStreamParser` | Muse Code (Meta) via `muse exec --json`; details below |
 | custom | `GenericCliAgent` | Config in `agents.json`: `command`, `args` with `{prompt}`, `{promptFile}`, `{workdir}`, `timeoutMinutes`, `versionArgs`. Each stdout line becomes an `AgentText` event; stderr becomes a System event. `{prompt}` is refused for `.cmd`/`.bat` commands (argument injection) |
 
 ### agy adapter
@@ -176,6 +177,29 @@ Runs `agy -p <prompt> --output-format stream-json --mode accept-edits --print-ti
 | `step_update`, `tool` DONE or ERROR | `AgentToolResult` (output summary; ERROR is shown as `error:`) |
 | `result` | final text, status (anything but `SUCCESS` is an error), turns, total tokens (no cost reported) |
 | stderr | `Warning`, and kept as `Diagnostics`, which the stage failure message includes |
+
+### muse adapter
+
+Runs `muse exec --json --prompt-file <tmp> --workspace <dir>` (Muse 1.4.14). The prompt goes through a temporary file because on
+Windows `muse` is a batch shim (`muse.cmd` starts a PowerShell launcher that starts the versioned exe); the work folder is
+rejected if it contains a character unsafe for batch arguments. A read-only request adds `--disable-write --disable-shell`; the
+shell is also disabled when implementing unless `muse.allowShell` is set. Muse's own approval and sandbox stay on, and the
+workspace's rules and skills load only with `muse.trustWorkspace`. `--json` writes one envelope per line (`payload_type`,
+`payload`) in an event-sourced protocol; the parser keeps only:
+
+| payload_type | MoonWalk event |
+|---|---|
+| `run.model.configured` | `System` "Agent session started (model)" |
+| `task.lifecycle.proposed` with `task_kind` `tool.<name>` | `AgentToolUse` (the tool name; arguments are not in this event) |
+| `tool.result` | `AgentToolResult`: for file writes `path (+added -removed)` from `edit_facts`, otherwise the first line and line count; a non-success outcome is shown as `error:` |
+| `run.output.delta` | `AgentTextDelta` (token-level) |
+| `run.terminal.*` | `AgentText` (empty, closes the block); final text and error state from the payload |
+| `run.usage` | total input plus output tokens, shown after the run |
+| everything else (task lifecycle bookkeeping, reminders) | ignored |
+
+stderr lines (`muse: workspace root ...`) become `System` events and are kept as diagnostics. No cost is reported.
+
+### agy permissions
 
 Headless agy cannot ask for permission, and a denied shell command ends the session (observed: the model ran
 `Get-ChildItem`, was auto-denied, and the run ended with no changes). So by default MoonWalk allows no commands and appends
@@ -262,8 +286,12 @@ Exercised against a throwaway repo with the real `claude` CLI:
 - Agents and workspaces (a scripted fake CLI agent, Muse in echo mode, real agy, a missing agent): health reported for all of
   them; two parallel worktree runs on one project (separate folders, main checkout untouched and clean, commits on separate
   branches, release removes the folder and keeps the branch); a Spec agent that edits a file is caught and stopped; a real agy run
-  (`write_file` streamed live, commit with the agy trailer, handover, release); Muse's `.cmd` shim resolved with its output
-  streamed line by line; a project naming an unknown agent is rejected at start.
+  (`write_file` streamed live, commit with the agy trailer, handover, release); a generic agent (Muse in echo mode before the
+  adapter existed) resolved through its `.cmd` shim with its output streamed line by line; a project naming an unknown agent is
+  rejected at start.
+- Real Muse run through all four stages on a throwaway repo: Spec read-only (only `read_file`, repo untouched, spec saved,
+  text streamed token by token), Implement (`read_file` then `write_file src/greeter.txt (+1)`, guards, commit with the Muse
+  trailer), Verify, Handover, approve, release. About 56k and 87k tokens for the two agent stages.
 - Recovery: a run killed hard in the middle of an agent stage comes back `Interrupted` with the workspace held, a second run
   queues behind it, recover re-runs the stage as attempt 2 with the retry note and finishes; a run killed while waiting at a gate is
   asked the same question again and continues after approval; recovering a run that is not interrupted is refused.
@@ -272,5 +300,4 @@ Exercised against a throwaway repo with the real `claude` CLI:
 
 ## Not built yet
 
-Killing agent processes when MoonWalk is killed (job object), notifications beyond the tab title, a dedicated adapter for Muse's
-JSON output, a playtest stage. Muse is wired through the generic adapter and was only exercised in echo mode, not with a model.
+Killing agent processes when MoonWalk is killed (job object), notifications beyond the tab title, a playtest stage.

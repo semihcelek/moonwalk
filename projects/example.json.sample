@@ -14,7 +14,7 @@
   // "refuse": do not start with uncommitted changes. "baseline": remember them and only commit what the agent changed.
   "dirtyPolicy": "refuse",
 
-  // "claude", "agy" (Gemini via Antigravity), or any agent defined in agents.json.
+  // "claude", "agy" (Gemini via Antigravity), "muse" (Muse Code), or any agent defined in agents.json.
   "agent": "claude",
 
   // Spec: read-only agent writes acceptance criteria. Implement: agent changes the code, MoonWalk commits it.
@@ -60,5 +60,16 @@
     // allowed and the prompt tells it to use file tools only. List exact command lines to allow, or ["*"] for every command
     // (which also lets it run git commit and git push).
     "allowedCommands": []
+  },
+
+  // Used when "agent" is "muse".
+  "muse": {
+    "path": "muse",
+    "model": null,
+    "timeoutMinutes": 45,
+    // Muse's shell runs inside its own sandbox, but it could still run git commit. Off by default; its file tools always work.
+    "allowShell": false,
+    // Load the workspace's own Muse skills and rules.
+    "trustWorkspace": false
   }
 }

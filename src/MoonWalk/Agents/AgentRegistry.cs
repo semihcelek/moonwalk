@@ -21,7 +21,7 @@ public sealed class AgentRegistry(string file)
         AllowTrailingCommas = true,
     };
 
-    private static readonly string[] Reserved = ["claude", "agy"];
+    private static readonly string[] Reserved = ["claude", "agy", "muse"];
 
     private readonly object _lock = new();
     private List<AgentDefinition> _custom = [];
@@ -96,6 +96,7 @@ public sealed class AgentRegistry(string file)
             {
                 new AgentInfo("claude", "built-in", "claude"),
                 new AgentInfo("agy", "built-in", "agy"),
+                new AgentInfo("muse", "built-in", "muse"),
             }
             .Concat(custom.Select(c => new AgentInfo(c.Name, "cli", c.Command)))
             .ToList();
@@ -113,6 +114,8 @@ public sealed class AgentRegistry(string file)
                 return new ClaudeAgent(profile.Claude);
             case "agy":
                 return new AgyAgent(profile.Agy);
+            case "muse":
+                return new MuseAgent(profile.Muse);
         }
 
         AgentDefinition? definition;
@@ -136,6 +139,7 @@ public sealed class AgentRegistry(string file)
         {
             CheckAsync("claude", "built-in", "claude", ["--version"], ct),
             CheckAsync("agy", "built-in", "agy", ["--version"], ct),
+            CheckAsync("muse", "built-in", "muse", ["--version"], ct),
         };
         checks.AddRange(custom.Select(c => CheckAsync(c.Name, "cli", c.Command, c.VersionArgs, ct)));
         return await Task.WhenAll(checks);
