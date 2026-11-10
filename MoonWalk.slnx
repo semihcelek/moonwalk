@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MoonWalk/MoonWalk.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,13 @@
+using MoonWalk.Pipeline.Stages;
+
+namespace MoonWalk.Pipeline;
+
+public static class DemoPipeline
+{
+    public static IReadOnlyList<IStage> Create() => new IStage[]
+    {
+        new DemoStage("Spec", "Reading the brief and turning it into acceptance criteria."),
+        new DemoStage("Implement", "Starting the implementation on the run branch."),
+        new DemoStage("Verify", "Checking that the change compiles and the guards pass."),
+    };
+}
