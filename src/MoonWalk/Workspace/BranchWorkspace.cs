@@ -8,8 +8,10 @@ namespace MoonWalk.Workspace;
 /// Runs a job on its own branch inside the project's normal working folder (no second checkout, so Unity does not
 /// reimport the project). Only one run per project may use it at a time; the engine enforces that.
 /// </summary>
-public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPolicy policy) : IWorkspace
+public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPolicy policy, IReadOnlyList<string>? ignorePaths = null) : IWorkspace
 {
+    private readonly List<Regex> _ignore = (ignorePaths ?? []).Select(Guards.ToRegex).ToList();
+
     public async Task EnsureReadyAsync(WorkspaceState state, CancellationToken ct)
     {
         var current = await Git.RunAsync(repoPath, ct, "symbolic-ref", "--short", "-q", "HEAD");
@@ -206,7 +208,7 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
                 paths.Add(tokens[++i]);
             }
         }
-        return paths.Distinct().ToList();
+        return paths.Distinct().Where(p => !_ignore.Any(r => r.IsMatch(p))).ToList();
     }
 
     private string Signature(string relativePath)

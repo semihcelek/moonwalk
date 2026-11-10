@@ -118,6 +118,13 @@ public sealed class ProjectProfile
 
     public DirtyPolicy DirtyPolicy { get; set; } = DirtyPolicy.Refuse;
 
+    /// <summary>
+    /// Globs of files MoonWalk pretends do not exist: never counted as dirty, never part of what the agent changed, never committed.
+    /// For files a tool rewrites on its own while a run is going (for Unity, some settings assets), which would otherwise look like
+    /// the agent touched a file that was already modified.
+    /// </summary>
+    public string[] IgnorePaths { get; set; } = [];
+
     public string Agent { get; set; } = "claude";
 
     public string[] Stages { get; set; } = ["Implement"];

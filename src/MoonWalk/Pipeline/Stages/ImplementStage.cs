@@ -146,6 +146,10 @@ public sealed class ImplementStage : IStage
         {
             sb.AppendLine("Co-Authored-By: Gemini <noreply@google.com>");
         }
+        else if (agent.Name == "muse")
+        {
+            sb.AppendLine("Co-Authored-By: Muse Code <noreply@meta.com>");
+        }
         return sb.ToString();
     }
 

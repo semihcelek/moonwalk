@@ -19,8 +19,9 @@ dotnet run --project src/MoonWalk
 Open <http://localhost:5870>, press **New run**, pick a project and describe the change. The built-in `demo` project
 streams scripted stages and needs nothing else.
 
-Run data is written to `runs/<id>/` (`run.json`, `events.jsonl`, `workspace.json`) under the folder you start MoonWalk
-from. Settings can be given as arguments or environment variables:
+Run data is written to `runs/<id>/` (`run.json`, `events.jsonl`, `workspace.json`) in the MoonWalk repository root. Relative
+paths in the settings below resolve against that root (the folder holding `MoonWalk.slnx`), so it does not matter where you
+start it from; absolute paths are used as given. Settings can be given as arguments or environment variables:
 
 | Setting | Argument | Environment variable | Default |
 |---|---|---|---|

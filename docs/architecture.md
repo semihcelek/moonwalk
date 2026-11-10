@@ -112,6 +112,15 @@ returns `NeedsHuman`, so the run waits for you to play the result with the repos
 profile (repo exists and is a git repo, known agent and stages, workspace mode supported, unique name) and keeps invalid ones
 listed with their errors so the UI can explain them. The built-in `demo` project always exists.
 
+`ignorePaths` (globs) lists files MoonWalk pretends do not exist in branch mode: they are filtered out of `git status` before
+anything else, so they never count as dirty, never appear as the agent's changes and are never committed. It is for files that a
+tool rewrites on its own during a run (for Unity, some settings assets); without it such a file, if already modified at the start,
+makes the run `Blocked` because MoonWalk cannot tell the tool's edit from the agent's.
+
+Settings paths (`MoonWalk:DataDir`, `ProjectsDir`, `AgentsFile`) are resolved once by `AppPaths`: relative values resolve against
+the MoonWalk repository root (the folder holding `MoonWalk.slnx`, found by walking up from the app), not the current folder,
+because `dotnet run` starts the app in the project folder. The artifact endpoint uses the same resolved paths.
+
 `Guards.Check(changedPaths, changedLines, rules)` is a pure function: max files, max lines, deny globs, optional allow globs.
 Globs: `**` crosses folders, `*` and `?` stay in one segment, a trailing `/` means everything below.
 

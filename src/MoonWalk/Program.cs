@@ -10,9 +10,10 @@ if (string.IsNullOrEmpty(builder.Configuration["urls"]))
     builder.WebHost.UseUrls("http://localhost:5870");
 }
 
-var runsRoot = Path.GetFullPath(builder.Configuration["MoonWalk:DataDir"] ?? "runs");
-var projectsDir = Path.GetFullPath(builder.Configuration["MoonWalk:ProjectsDir"] ?? "projects");
-var agentsFile = Path.GetFullPath(builder.Configuration["MoonWalk:AgentsFile"] ?? "agents.json");
+var paths = AppPaths.From(builder.Configuration, builder.Environment.ContentRootPath);
+var runsRoot = paths.RunsRoot;
+var projectsDir = paths.ProjectsDir;
+var agentsFile = paths.AgentsFile;
 
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -25,6 +26,7 @@ agents.Reload();
 var registry = new ProjectRegistry(projectsDir, agents);
 registry.Reload();
 
+builder.Services.AddSingleton(paths);
 builder.Services.AddSingleton(agents);
 builder.Services.AddSingleton(registry);
 builder.Services.AddSingleton(new EventHub(runsRoot));

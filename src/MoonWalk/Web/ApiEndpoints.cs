@@ -66,14 +66,14 @@ public static class ApiEndpoints
             return Results.Ok(new { count = agents.List().Count, errors = agents.Errors });
         });
 
-        app.MapGet("/api/runs/{id}/files/{**name}", (string id, string name, RunStore store, IConfiguration config) =>
+        app.MapGet("/api/runs/{id}/files/{**name}", (string id, string name, RunStore store, AppPaths paths) =>
         {
             var run = store.Get(id);
             if (run is null || !run.Artifacts.Contains(name))
             {
                 return Results.NotFound();
             }
-            var root = Path.GetFullPath(Path.Combine(Path.GetFullPath(config["MoonWalk:DataDir"] ?? "runs"), id));
+            var root = Path.GetFullPath(Path.Combine(paths.RunsRoot, id));
             var path = Path.GetFullPath(Path.Combine(root, name.Replace('/', Path.DirectorySeparatorChar)));
             if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
             {

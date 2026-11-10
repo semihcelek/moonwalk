@@ -14,6 +14,10 @@
   // "refuse": do not start with uncommitted changes. "baseline": remember them and only commit what the agent changed.
   "dirtyPolicy": "refuse",
 
+  // Files a tool rewrites on its own while a run is going (Unity does this to some settings assets). They are never counted as dirty,
+  // never treated as the agent's work and never committed. Without this, such a file makes a run Blocked.
+  "ignorePaths": [],
+
   // "claude", "agy" (Gemini via Antigravity), "muse" (Muse Code), or any agent defined in agents.json.
   "agent": "claude",
 

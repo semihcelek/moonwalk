@@ -67,7 +67,7 @@ public static class WorkspaceFactory
 {
     public static IWorkspace Create(ProjectProfile profile) => profile.Workspace switch
     {
-        WorkspaceMode.Branch => new BranchWorkspace(profile.RepoPath, profile.BaseBranch, profile.DirtyPolicy),
+        WorkspaceMode.Branch => new BranchWorkspace(profile.RepoPath, profile.BaseBranch, profile.DirtyPolicy, profile.IgnorePaths),
         WorkspaceMode.Worktree => new WorktreeWorkspace(profile.RepoPath, profile.BaseBranch, profile.WorktreeRoot),
         _ => throw new ArgumentException($"Workspace mode '{profile.Workspace}' has no workspace."),
     };
