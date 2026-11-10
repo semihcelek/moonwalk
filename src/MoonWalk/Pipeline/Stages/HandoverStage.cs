@@ -25,7 +25,14 @@ public sealed class HandoverStage : IStage
         sb.AppendLine($"- Project: {context.Profile.Name}");
         sb.AppendLine($"- Run: {context.RunId}");
         sb.AppendLine($"- Branch: `{state.Branch}` (from `{state.BaseBranch}`)");
-        sb.AppendLine($"- The repository is on this branch now. Releasing the workspace puts it back on `{state.ReturnTo}`.");
+        if (state.Mode == "Worktree")
+        {
+            sb.AppendLine($"- The change lives in its own worktree folder: `{state.WorkDir}`. Your own working folder is untouched. Releasing the workspace removes that folder; the branch stays in the repository.");
+        }
+        else
+        {
+            sb.AppendLine($"- The repository is on this branch now. Releasing the workspace puts it back on `{state.ReturnTo}`.");
+        }
         if (run?.CostUsd is { } cost)
         {
             sb.AppendLine($"- Agent cost so far: ${cost:0.000}");
@@ -63,13 +70,18 @@ public sealed class HandoverStage : IStage
 
         sb.AppendLine();
         sb.AppendLine("## What to do now");
-        sb.AppendLine("1. Open the project (the repository is already on the run branch) and play or review the change.");
+        sb.AppendLine(state.Mode == "Worktree"
+            ? "1. Open the worktree folder above (the first open of a new folder imports it) and play or review the change."
+            : "1. Open the project (the repository is already on the run branch) and play or review the change.");
         sb.AppendLine("2. In MoonWalk: **Approve** if it is good, or **Retry** from Implement with a note describing what you found.");
-        sb.AppendLine("3. After approving, press **Release workspace** to return the repository to your previous branch.");
+        sb.AppendLine(state.Mode == "Worktree"
+            ? "3. After approving, press **Release workspace** to remove the worktree folder. The branch stays for you to merge."
+            : "3. After approving, press **Release workspace** to return the repository to your previous branch.");
 
         context.WriteArtifact("handover.md", sb.ToString());
         context.Emit(EventTypes.System, "Handover written.");
 
-        return StageResult.NeedsHuman($"Ready for your playtest on {state.Branch}. Approve when it plays well, or retry with a note.");
+        return StageResult.NeedsHuman(
+            $"Ready for your playtest on {state.Branch}" + (state.Mode == "Worktree" ? $" (worktree {state.WorkDir})" : "") + ". Approve when it plays well, or retry with a note.");
     }
 }

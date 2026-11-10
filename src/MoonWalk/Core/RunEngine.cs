@@ -12,8 +12,9 @@ public sealed record DecisionRequest(string Action, string? Note = null, string?
 /// <summary>
 /// Runs a pipeline stage by stage in the background, recording state and emitting events as it goes. A run waits for a
 /// decision at configured gates, after a stage that asks for a human, and after a failed or blocked stage (retry or stop).
-/// In branch workspace mode only one run per project may own the working folder: others wait as Queued. A run that finishes
-/// successfully keeps the folder (the repository stays on its branch so it can be played) until it is released.
+/// In branch workspace mode only one run per project may own the working folder: others wait as Queued. In worktree mode every
+/// run has its own folder and runs in parallel. A run that finishes successfully keeps its workspace (so the result can be
+/// played) until it is released. A run interrupted by a MoonWalk restart can be recovered where it stopped.
 /// </summary>
 public sealed class RunEngine
 {
@@ -35,22 +36,24 @@ public sealed class RunEngine
     private readonly RunStore _store;
     private readonly EventHub _hub;
     private readonly ProjectRegistry _projects;
+    private readonly AgentRegistry _agents;
     private readonly string _runsRoot;
     private readonly ConcurrentDictionary<string, RunControl> _controls = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _holders = new(StringComparer.OrdinalIgnoreCase);
 
-    public RunEngine(RunStore store, EventHub hub, ProjectRegistry projects, string runsRoot)
+    public RunEngine(RunStore store, EventHub hub, ProjectRegistry projects, AgentRegistry agents, string runsRoot)
     {
         _store = store;
         _hub = hub;
         _projects = projects;
+        _agents = agents;
         _runsRoot = runsRoot;
 
-        // A run that still owns its workspace from before a restart keeps owning it.
+        // A run that still owns a shared project folder from before a restart keeps owning it. Worktrees need no lock.
         foreach (var (id, project) in store.HeldWorkspaces())
         {
-            if (LockFor(project).Wait(0))
+            if (_projects.Get(project)?.Profile.Workspace == WorkspaceMode.Branch && LockFor(project).Wait(0))
             {
                 _holders[project] = id;
             }
@@ -84,8 +87,73 @@ public sealed class RunEngine
 
         var control = new RunControl(new CancellationTokenSource(), stages.Select(s => s.Name).ToList());
         _controls[run.Id] = control;
-        _ = Task.Run(() => ExecuteAsync(run.Id, brief, profile, stages, control));
+        _ = Task.Run(() => ExecuteAsync(run.Id, brief, profile, stages, control, recover: false));
         return run;
+    }
+
+    /// <summary>
+    /// Continues a run that a MoonWalk restart interrupted. If it was waiting for you, the same question is asked again; otherwise
+    /// it picks up at the first stage that had not passed (an agent stage that was cut off runs again as a retry).
+    /// </summary>
+    public async Task<(bool Ok, string Message)> RecoverAsync(string id)
+    {
+        var run = _store.Get(id);
+        if (run is null)
+        {
+            return (false, "Run not found.");
+        }
+        if (run.Status != RunStatus.Interrupted || _controls.ContainsKey(id))
+        {
+            return (false, "Only an interrupted run can be recovered.");
+        }
+
+        var entry = _projects.Get(run.Project);
+        if (entry is null || !entry.IsValid)
+        {
+            return (false, $"Project '{run.Project}' is missing or has configuration errors.");
+        }
+
+        var profile = entry.Profile;
+        IReadOnlyList<IStage> stages;
+        try
+        {
+            stages = PipelineFactory.Create(profile);
+        }
+        catch (ArgumentException ex)
+        {
+            return (false, ex.Message);
+        }
+        if (!stages.Select(s => s.Name).SequenceEqual(run.Stages.Select(s => s.Name)))
+        {
+            return (false, "The project's stages changed since this run started, so it cannot be resumed.");
+        }
+
+        if (!profile.IsDemo && profile.Workspace != WorkspaceMode.None && WorkspaceState.Load(Path.Combine(_runsRoot, id)) is { } state)
+        {
+            try
+            {
+                await WorkspaceFactory.Create(profile).EnsureReadyAsync(state, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                return (false, $"The workspace cannot be reused: {ex.Message}");
+            }
+        }
+
+        var control = new RunControl(new CancellationTokenSource(), stages.Select(s => s.Name).ToList());
+        if (!_controls.TryAdd(id, control))
+        {
+            return (false, "The run is already being recovered.");
+        }
+
+        _store.Update(id, r =>
+        {
+            r.Status = RunStatus.Queued;
+            r.Error = null;
+            r.FinishedAt = null;
+        });
+        _ = Task.Run(() => ExecuteAsync(id, run.Brief, profile, stages, control, recover: true));
+        return (true, "Recovering the run.");
     }
 
     /* ------------------------------------------------------------ controls */
@@ -177,7 +245,7 @@ public sealed class RunEngine
                     {
                         return (false, $"Unknown stage '{from}'.");
                     }
-                    if (request.Agent is { Length: > 0 } agent && !AgentFactory.IsKnown(agent))
+                    if (request.Agent is { Length: > 0 } agent && !_agents.IsKnown(agent))
                     {
                         return (false, $"Unknown agent '{agent}'.");
                     }
@@ -191,7 +259,7 @@ public sealed class RunEngine
         return (true, "Decision recorded.");
     }
 
-    /// <summary>Gives the working folder back: the repository returns to the branch it was on before the run.</summary>
+    /// <summary>Gives the workspace back: branch mode returns the repository to the branch it was on; worktree mode removes the worktree folder.</summary>
     public async Task<(bool Ok, string Message)> ReleaseAsync(string id)
     {
         var run = _store.Get(id);
@@ -212,13 +280,12 @@ public sealed class RunEngine
         var state = WorkspaceState.Load(Path.Combine(_runsRoot, id));
         if (entry is null || state is null)
         {
-            return (false, "Project profile or workspace state is missing; restore the branch by hand.");
+            return (false, "Project profile or workspace state is missing; restore the branch or remove the worktree by hand.");
         }
 
         try
         {
-            var profile = entry.Profile;
-            await new BranchWorkspace(profile.RepoPath, profile.BaseBranch, profile.DirtyPolicy).ReleaseAsync(state, CancellationToken.None);
+            await WorkspaceFactory.Create(entry.Profile).ReleaseAsync(state, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -232,21 +299,23 @@ public sealed class RunEngine
             first = r.WorkspaceHeld;
             r.WorkspaceHeld = false;
         });
+        var message = state.Mode == "Worktree" ? $"Worktree removed; branch '{state.Branch}' stays." : $"Back on '{state.ReturnTo}'.";
         if (first)
         {
             ReleaseLock(run.Project, id);
-            _hub.Append(id, EventTypes.System, null, $"Workspace released; the repository is back on '{state.ReturnTo}'.");
+            _hub.Append(id, EventTypes.System, null, "Workspace released. " + message);
         }
-        return (true, $"Back on '{state.ReturnTo}'.");
+        return (true, message);
     }
 
     /* ----------------------------------------------------------- execution */
 
-    private async Task ExecuteAsync(string id, string brief, ProjectProfile profile, IReadOnlyList<IStage> stages, RunControl control)
+    private async Task ExecuteAsync(string id, string brief, ProjectProfile profile, IReadOnlyList<IStage> stages, RunControl control, bool recover)
     {
         var runDir = Path.Combine(_runsRoot, id);
         var ct = control.Cts.Token;
-        var usesWorkspace = !profile.IsDemo && profile.Workspace == WorkspaceMode.Branch;
+        var usesWorkspace = !profile.IsDemo && profile.Workspace != WorkspaceMode.None;
+        var sharedFolder = usesWorkspace && profile.Workspace == WorkspaceMode.Branch;
 
         var lockHeld = false;
         WorkspaceSession? session = null;
@@ -256,35 +325,52 @@ public sealed class RunEngine
 
         try
         {
-            if (usesWorkspace)
+            if (sharedFolder)
             {
                 var gate = LockFor(profile.Name);
-                if (!gate.Wait(0))
+                if (_holders.TryGetValue(profile.Name, out var current) && current == id)
                 {
-                    _holders.TryGetValue(profile.Name, out var holder);
-                    _hub.Append(id, EventTypes.System, null,
-                        $"Waiting for project '{profile.Name}': its workspace is in use by run {holder ?? "(unknown)"}. Release it to continue.");
-                    await gate.WaitAsync(ct);
+                    lockHeld = true; // already ours: re-held after a restart
                 }
-                lockHeld = true;
-                _holders[profile.Name] = id;
+                else
+                {
+                    if (!gate.Wait(0))
+                    {
+                        _holders.TryGetValue(profile.Name, out var holder);
+                        _hub.Append(id, EventTypes.System, null,
+                            $"Waiting for project '{profile.Name}': its workspace is in use by run {holder ?? "(unknown)"}. Release it to continue.");
+                        await gate.WaitAsync(ct);
+                    }
+                    lockHeld = true;
+                    _holders[profile.Name] = id;
+                }
             }
 
             _store.Update(id, r => r.Status = RunStatus.Running);
-            _hub.Append(id, EventTypes.RunStarted, null, "Run started.");
+            _hub.Append(id, EventTypes.RunStarted, null, recover ? "Run recovered after a restart." : "Run started.");
 
             if (usesWorkspace)
             {
-                _hub.Append(id, EventTypes.System, null, "Preparing workspace.");
-                var workspace = new BranchWorkspace(profile.RepoPath, profile.BaseBranch, profile.DirtyPolicy);
-                var state = await workspace.PrepareAsync(id, _store.Get(id)!.Title, msg => _hub.Append(id, EventTypes.System, null, msg), ct);
-                Directory.CreateDirectory(runDir);
-                state.Save(runDir);
+                var workspace = WorkspaceFactory.Create(profile);
+                var state = recover ? WorkspaceState.Load(runDir) : null;
+                if (state is null)
+                {
+                    _hub.Append(id, EventTypes.System, null, "Preparing workspace.");
+                    state = await workspace.PrepareAsync(id, _store.Get(id)!.Title, msg => _hub.Append(id, EventTypes.System, null, msg), ct);
+                    Directory.CreateDirectory(runDir);
+                    state.Save(runDir);
+                }
+                else
+                {
+                    _hub.Append(id, EventTypes.System, null, $"Reusing the workspace on branch {state.Branch}.");
+                }
                 session = new WorkspaceSession(workspace, state);
                 _store.Update(id, r =>
                 {
                     r.Branch = state.Branch;
-                    r.ReturnTo = state.ReturnTo;
+                    r.ReturnTo = string.IsNullOrEmpty(state.ReturnTo) ? null : state.ReturnTo;
+                    r.WorkspaceMode = state.Mode;
+                    r.WorkDir = state.WorkDir;
                     r.WorkspaceHeld = true;
                 });
             }
@@ -293,96 +379,136 @@ public sealed class RunEngine
             string? previousFailure = null;
             var agentName = profile.Agent;
             var index = 0;
+            WaitState? pendingWait = null;
+
+            if (recover)
+            {
+                (index, pendingWait) = FindResumePoint(_store.Get(id)!, stages);
+                _store.Update(id, r =>
+                {
+                    r.ResumeWait = null;
+                    for (var i = index; i < r.Stages.Count; i++)
+                    {
+                        if (i == index && pendingWait is not null)
+                        {
+                            continue; // keeps the result it had when the question was asked
+                        }
+                        if (i == index && r.Stages[i].StartedAt is not null)
+                        {
+                            attempts[r.Stages[i].Name] = 1; // it was cut off: the next run is a retry
+                        }
+                        r.Stages[i].Status = StageStatus.Pending;
+                        r.Stages[i].StartedAt = null;
+                        r.Stages[i].FinishedAt = null;
+                        r.Stages[i].Summary = null;
+                    }
+                });
+                _hub.Append(id, EventTypes.Decision, index < stages.Count ? stages[index].Name : null,
+                    index >= stages.Count ? "Recovered: every stage had already passed."
+                    : pendingWait is not null ? $"Recovered: asking again what to do at {stages[index].Name}."
+                    : $"Recovered: continuing at {stages[index].Name}.");
+            }
 
             while (index < stages.Count)
             {
                 ct.ThrowIfCancellationRequested();
-                await PauseIfRequestedAsync(id, control, ct);
-
                 var stage = stages[index];
                 currentStage = stage.Name;
-                attempts[stage.Name] = attempts.GetValueOrDefault(stage.Name) + 1;
+                WaitState wait;
 
-                _store.Update(id, r =>
+                if (pendingWait is { } carried)
                 {
-                    r.CurrentStage = stage.Name;
-                    var record = r.Stages.First(s => s.Name == stage.Name);
-                    record.Status = StageStatus.Running;
-                    record.StartedAt = DateTimeOffset.Now;
-                    record.FinishedAt = null;
-                    record.Summary = null;
-                });
-                _hub.Append(id, EventTypes.StageStarted, stage.Name,
-                    attempts[stage.Name] > 1 ? $"Stage {stage.Name} started (attempt {attempts[stage.Name]})." : $"Stage {stage.Name} started.");
-
-                var context = new StageContext
-                {
-                    RunId = id,
-                    Brief = brief,
-                    RunDir = runDir,
-                    StageName = stage.Name,
-                    Hub = _hub,
-                    Profile = profile,
-                    UpdateRunAction = mutate => _store.Update(id, mutate),
-                    GetRunFunc = () => _store.Get(id),
-                    Workspace = session,
-                    Agent = profile.IsDemo ? null : AgentFactory.Create(agentName, profile),
-                    Attempt = attempts[stage.Name],
-                    Guidance = _store.Get(id)!.Guidance.Select(g => g.Text).ToList(),
-                    PreviousFailure = previousFailure,
-                };
-
-                StageResult result;
-                try
-                {
-                    result = await stage.RunAsync(context, ct);
+                    pendingWait = null;
+                    wait = carried;
+                    if (!wait.CanApprove)
+                    {
+                        previousFailure = wait.Message;
+                    }
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                else
                 {
-                    _hub.Append(id, EventTypes.Error, stage.Name, ex.Message);
-                    result = StageResult.Failed(ex.Message);
-                }
+                    await PauseIfRequestedAsync(id, control, ct);
+                    attempts[stage.Name] = attempts.GetValueOrDefault(stage.Name) + 1;
 
-                _store.Update(id, r =>
-                {
-                    var record = r.Stages.First(s => s.Name == stage.Name);
-                    record.Status = ToStageStatus(result.Outcome);
-                    record.FinishedAt = DateTimeOffset.Now;
-                    record.Summary = result.Summary;
-                });
-                _hub.Append(id, EventTypes.StageFinished, stage.Name, result.Summary,
-                    new() { ["outcome"] = result.Outcome.ToString(), ["attempt"] = attempts[stage.Name] });
+                    _store.Update(id, r =>
+                    {
+                        r.CurrentStage = stage.Name;
+                        var record = r.Stages.First(s => s.Name == stage.Name);
+                        record.Status = StageStatus.Running;
+                        record.StartedAt = DateTimeOffset.Now;
+                        record.FinishedAt = null;
+                        record.Summary = null;
+                    });
+                    _hub.Append(id, EventTypes.StageStarted, stage.Name,
+                        attempts[stage.Name] > 1 ? $"Stage {stage.Name} started (attempt {attempts[stage.Name]})." : $"Stage {stage.Name} started.");
 
-                WaitState? wait;
-                switch (result.Outcome)
-                {
-                    case StageOutcome.Passed when profile.Gates.Contains(stage.Name, StringComparer.OrdinalIgnoreCase):
-                        previousFailure = null;
-                        wait = new WaitState
+                    StageResult result;
+                    try
+                    {
+                        var context = new StageContext
                         {
-                            Stage = stage.Name,
-                            Reason = "Gate",
-                            Message = $"{stage.Name} finished. Review it, then approve to continue, or redo it with a note.",
-                            CanApprove = true,
+                            RunId = id,
+                            Brief = brief,
+                            RunDir = runDir,
+                            StageName = stage.Name,
+                            Hub = _hub,
+                            Profile = profile,
+                            UpdateRunAction = mutate => _store.Update(id, mutate),
+                            GetRunFunc = () => _store.Get(id),
+                            Workspace = session,
+                            Agent = profile.IsDemo ? null : _agents.Create(agentName, profile),
+                            Attempt = attempts[stage.Name],
+                            Guidance = _store.Get(id)!.Guidance.Select(g => g.Text).ToList(),
+                            PreviousFailure = previousFailure,
                         };
-                        break;
-                    case StageOutcome.Passed:
-                        previousFailure = null;
-                        index++;
-                        continue;
-                    case StageOutcome.NeedsHuman:
-                        wait = new WaitState { Stage = stage.Name, Reason = "Review", Message = result.Summary ?? "Waiting for you.", CanApprove = true };
-                        break;
-                    default:
-                        previousFailure = result.Summary;
-                        wait = new WaitState
-                        {
-                            Stage = stage.Name,
-                            Reason = result.Outcome == StageOutcome.Blocked ? "Blocked" : "Failed",
-                            Message = result.Summary ?? "The stage did not pass.",
-                            CanApprove = false,
-                        };
-                        break;
+                        result = await stage.RunAsync(context, ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _hub.Append(id, EventTypes.Error, stage.Name, ex.Message);
+                        result = StageResult.Failed(ex.Message);
+                    }
+
+                    _store.Update(id, r =>
+                    {
+                        var record = r.Stages.First(s => s.Name == stage.Name);
+                        record.Status = ToStageStatus(result.Outcome);
+                        record.FinishedAt = DateTimeOffset.Now;
+                        record.Summary = result.Summary;
+                    });
+                    _hub.Append(id, EventTypes.StageFinished, stage.Name, result.Summary,
+                        new() { ["outcome"] = result.Outcome.ToString(), ["attempt"] = attempts[stage.Name] });
+
+                    switch (result.Outcome)
+                    {
+                        case StageOutcome.Passed when profile.Gates.Contains(stage.Name, StringComparer.OrdinalIgnoreCase):
+                            previousFailure = null;
+                            wait = new WaitState
+                            {
+                                Stage = stage.Name,
+                                Reason = "Gate",
+                                Message = $"{stage.Name} finished. Review it, then approve to continue, or redo it with a note.",
+                                CanApprove = true,
+                            };
+                            break;
+                        case StageOutcome.Passed:
+                            previousFailure = null;
+                            index++;
+                            continue;
+                        case StageOutcome.NeedsHuman:
+                            wait = new WaitState { Stage = stage.Name, Reason = "Review", Message = result.Summary ?? "Waiting for you.", CanApprove = true };
+                            break;
+                        default:
+                            previousFailure = result.Summary;
+                            wait = new WaitState
+                            {
+                                Stage = stage.Name,
+                                Reason = result.Outcome == StageOutcome.Blocked ? "Blocked" : "Failed",
+                                Message = result.Summary ?? "The stage did not pass.",
+                                CanApprove = false,
+                            };
+                            break;
+                    }
                 }
 
                 var decision = await WaitForDecisionAsync(id, control, wait, ct);
@@ -477,6 +603,22 @@ public sealed class RunEngine
         control.Cts.Dispose();
     }
 
+    /// <summary>Where a recovered run continues: the question it was asked, or the first stage that had not passed.</summary>
+    private static (int Index, WaitState? Pending) FindResumePoint(Run run, IReadOnlyList<IStage> stages)
+    {
+        if (run.ResumeWait is { } wait)
+        {
+            var at = run.Stages.FindIndex(s => string.Equals(s.Name, wait.Stage, StringComparison.OrdinalIgnoreCase));
+            if (at >= 0)
+            {
+                return (at, wait);
+            }
+        }
+
+        var first = run.Stages.FindIndex(s => s.Status != StageStatus.Passed);
+        return (first < 0 ? stages.Count : first, null);
+    }
+
     private async Task PauseIfRequestedAsync(string id, RunControl control, CancellationToken ct)
     {
         TaskCompletionSource? resume = null;
@@ -556,38 +698,43 @@ public sealed class RunEngine
 
     /// <summary>
     /// A successful run keeps the workspace so the result can be played. Anything else keeps its partial work as a local wip commit,
-    /// puts the repository back where it was, and frees the project for the next run.
+    /// gives the workspace back (branch mode: repository restored; worktree mode: folder removed), and frees the project.
     /// </summary>
     private async Task SettleWorkspaceAsync(string id, ProjectProfile profile, string runDir, WorkspaceSession? session, bool lockHeld, RunStatus status)
     {
-        if (!lockHeld)
+        if (session is null)
         {
+            if (lockHeld)
+            {
+                ReleaseLock(profile.Name, id);
+            }
             return;
         }
 
-        if (session is not null && status == RunStatus.Done)
+        if (status == RunStatus.Done)
         {
-            _hub.Append(id, EventTypes.System, null,
-                $"Workspace kept: the repository is on '{session.State.Branch}'. Release it when you are done to return to '{session.State.ReturnTo}'.");
+            _hub.Append(id, EventTypes.System, null, session.State.Mode == "Worktree"
+                ? $"Workspace kept: the change lives in {session.State.WorkDir}. Release it when you are done to remove that folder."
+                : $"Workspace kept: the repository is on '{session.State.Branch}'. Release it when you are done to return to '{session.State.ReturnTo}'.");
             return;
         }
 
-        if (session is not null)
+        var warning = await session.Workspace.AbortAsync(session.State, id, runDir, CancellationToken.None);
+        _hub.Append(id, warning is null ? EventTypes.System : EventTypes.Warning,
+            null,
+            warning ?? (session.State.Mode == "Worktree"
+                ? $"Partial work (if any) kept on local branch '{session.State.Branch}'; the worktree folder was removed."
+                : $"Partial work (if any) kept on local branch '{session.State.Branch}'; repository restored to '{session.State.ReturnTo}'."));
+        if (warning is not null)
         {
-            var warning = await session.Workspace.AbortAsync(session.State, id, runDir, CancellationToken.None);
-            _hub.Append(id, warning is null ? EventTypes.System : EventTypes.Warning,
-                null,
-                warning ?? $"Partial work (if any) kept on local branch '{session.State.Branch}'; repository restored to '{session.State.ReturnTo}'.");
-            if (warning is null)
-            {
-                _store.Update(id, r => r.WorkspaceHeld = false);
-            }
-            else
-            {
-                return; // still on the run branch: keep the lock so nothing else starts on top of it
-            }
+            return; // still holding the workspace: keep the lock so nothing starts on top of it
         }
-        ReleaseLock(profile.Name, id);
+
+        _store.Update(id, r => r.WorkspaceHeld = false);
+        if (lockHeld)
+        {
+            ReleaseLock(profile.Name, id);
+        }
     }
 
     private SemaphoreSlim LockFor(string project) => _locks.GetOrAdd(project, _ => new SemaphoreSlim(1, 1));

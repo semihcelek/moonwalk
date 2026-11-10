@@ -1,44 +1,25 @@
 using System.Text;
-using System.Text.Json;
 using System.Text.RegularExpressions;
-using MoonWalk.Core;
 using MoonWalk.Projects;
 
 namespace MoonWalk.Workspace;
-
-/// <summary>Persisted per run (runs/&lt;id&gt;/workspace.json) so a held workspace can be released after a restart.</summary>
-public sealed class WorkspaceState
-{
-    public string Branch { get; set; } = "";
-
-    /// <summary>The branch (or commit) the repository was on before the run; restored on release.</summary>
-    public string ReturnTo { get; set; } = "";
-
-    public string BaseBranch { get; set; } = "";
-
-    /// <summary>Paths that were already modified when the run started, with a cheap file signature.</summary>
-    public Dictionary<string, string> Baseline { get; set; } = new();
-
-    public static WorkspaceState? Load(string runDir)
-    {
-        var path = Path.Combine(runDir, "workspace.json");
-        return File.Exists(path) ? JsonSerializer.Deserialize<WorkspaceState>(File.ReadAllText(path), Json.Options) : null;
-    }
-
-    public void Save(string runDir) =>
-        File.WriteAllText(Path.Combine(runDir, "workspace.json"), JsonSerializer.Serialize(this, new JsonSerializerOptions(Json.Options) { WriteIndented = true }));
-}
-
-public sealed record AgentChanges(IReadOnlyList<string> Paths, IReadOnlyList<string> Conflicts);
-
-public sealed record WorkspaceSession(BranchWorkspace Workspace, WorkspaceState State);
 
 /// <summary>
 /// Runs a job on its own branch inside the project's normal working folder (no second checkout, so Unity does not
 /// reimport the project). Only one run per project may use it at a time; the engine enforces that.
 /// </summary>
-public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPolicy policy)
+public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPolicy policy) : IWorkspace
 {
+    public async Task EnsureReadyAsync(WorkspaceState state, CancellationToken ct)
+    {
+        var current = await Git.RunAsync(repoPath, ct, "symbolic-ref", "--short", "-q", "HEAD");
+        if (current.Ok && current.Out.Trim() == state.Branch)
+        {
+            return;
+        }
+        await Git.RunOrThrowAsync(repoPath, ct, "checkout", state.Branch);
+    }
+
     public async Task<WorkspaceState> PrepareAsync(string runId, string title, Action<string> log, CancellationToken ct)
     {
         var inside = await Git.RunAsync(repoPath, ct, "rev-parse", "--is-inside-work-tree");
@@ -55,7 +36,7 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
                 $"The working tree has {dirty.Count} uncommitted change(s) ({sample}). Commit or stash them, or set dirtyPolicy to 'baseline' in the project profile.");
         }
 
-        var state = new WorkspaceState { BaseBranch = baseBranch };
+        var state = new WorkspaceState { Mode = "Branch", BaseBranch = baseBranch, WorkDir = repoPath };
         foreach (var path in dirty)
         {
             state.Baseline[path] = Signature(path);
@@ -130,7 +111,7 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
     }
 
     /// <summary>Stages exactly these paths and returns how many lines they add or remove.</summary>
-    public async Task<int> StageAsync(IReadOnlyList<string> paths, string runDir, CancellationToken ct)
+    public async Task<int> StageAsync(WorkspaceState state, IReadOnlyList<string> paths, string runDir, CancellationToken ct)
     {
         var pathspec = WritePathspec(runDir, paths);
         await Git.RunOrThrowAsync(repoPath, ct, "add", $"--pathspec-from-file={pathspec}", "--pathspec-file-nul");
@@ -154,7 +135,7 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
     }
 
     /// <summary>Commits only the given paths (other staged files are left alone) and returns the short commit id.</summary>
-    public async Task<string> CommitAsync(IReadOnlyList<string> paths, string message, string runDir, CancellationToken ct)
+    public async Task<string> CommitAsync(WorkspaceState state, IReadOnlyList<string> paths, string message, string runDir, CancellationToken ct)
     {
         var pathspec = WritePathspec(runDir, paths);
         var messageFile = Path.Combine(runDir, "commit.txt");
@@ -171,14 +152,7 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
     {
         try
         {
-            var changes = await GetChangesAsync(state, ct);
-            if (changes.Paths.Count > 0)
-            {
-                var pathspec = WritePathspec(runDir, changes.Paths);
-                await Git.RunAsync(repoPath, ct, "add", $"--pathspec-from-file={pathspec}", "--pathspec-file-nul");
-                await Git.RunAsync(repoPath, ct, "commit", "-m", $"wip(moonwalk): unfinished run {runId} - not pushed",
-                    $"--pathspec-from-file={pathspec}", "--pathspec-file-nul");
-            }
+            await CommitWipAsync(state, runId, runDir, ct);
             await ReleaseAsync(state, ct);
             return null;
         }
@@ -186,6 +160,20 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
         {
             return $"Could not restore the repository to '{state.ReturnTo}': {ex.Message}";
         }
+    }
+
+    /// <summary>Commits whatever the agent changed as a local wip commit (never pushed). Does nothing when there is nothing to keep.</summary>
+    public async Task CommitWipAsync(WorkspaceState state, string runId, string runDir, CancellationToken ct)
+    {
+        var changes = await GetChangesAsync(state, ct);
+        if (changes.Paths.Count == 0)
+        {
+            return;
+        }
+        var pathspec = WritePathspec(runDir, changes.Paths);
+        await Git.RunAsync(repoPath, ct, "add", $"--pathspec-from-file={pathspec}", "--pathspec-file-nul");
+        await Git.RunAsync(repoPath, ct, "commit", "-m", $"wip(moonwalk): unfinished run {runId} - not pushed",
+            $"--pathspec-from-file={pathspec}", "--pathspec-file-nul");
     }
 
     /// <summary>Commit list and per-file diff summary of the run branch against its base, for the handover note.</summary>
@@ -239,7 +227,7 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
         return file;
     }
 
-    private static string Slug(string title)
+    internal static string Slug(string title)
     {
         var slug = Regex.Replace(title.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
         if (slug.Length > 30)

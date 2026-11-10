@@ -52,7 +52,19 @@ public static class ApiEndpoints
         app.MapPost("/api/runs/{id}/decision", (string id, DecisionRequest request, RunEngine engine) =>
             Reply(engine.Decide(id, request)));
 
-        app.MapGet("/api/agents", () => Results.Json(new { agents = AgentFactory.Known }, Json.Options));
+        app.MapPost("/api/runs/{id}/recover", async (string id, RunEngine engine) => Reply(await engine.RecoverAsync(id)));
+
+        app.MapGet("/api/agents", (AgentRegistry agents) =>
+            Results.Json(new { agents = agents.Names, details = agents.List(), errors = agents.Errors }, Json.Options));
+
+        app.MapGet("/api/agents/health", async (AgentRegistry agents, CancellationToken ct) =>
+            Results.Json(new { agents = await agents.CheckAllAsync(ct), errors = agents.Errors }, Json.Options));
+
+        app.MapPost("/api/agents/reload", (AgentRegistry agents) =>
+        {
+            agents.Reload();
+            return Results.Ok(new { count = agents.List().Count, errors = agents.Errors });
+        });
 
         app.MapGet("/api/runs/{id}/files/{**name}", (string id, string name, RunStore store, IConfiguration config) =>
         {
@@ -82,7 +94,7 @@ public static class ApiEndpoints
                 name = e.Profile.Name,
                 repoPath = e.Profile.IsDemo ? null : e.Profile.RepoPath,
                 baseBranch = e.Profile.IsDemo ? null : e.Profile.BaseBranch,
-                workspace = e.Profile.Workspace,
+                workspace = e.Profile.IsDemo ? "none" : e.Profile.Workspace.ToString().ToLowerInvariant(),
                 dirtyPolicy = e.Profile.DirtyPolicy,
                 agent = e.Profile.IsDemo ? null : e.Profile.Agent,
                 stages = e.Profile.Stages,

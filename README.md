@@ -6,9 +6,9 @@ you a live dark web UI to watch what each agent is doing and to steer it.
 
 It is project-agnostic: each project is a profile file (repo path, stages, guards, agent). It is not tied to Unity.
 
-> Status: chunk 3 of 4. Real Claude agent with live streaming, project profiles, in-place branch workspace, the
-> Spec, Implement, Verify and Handover stages, guards, and the control surface (gates, pause, retry, guidance, stop)
-> work end to end. Other agents (Gemini, Muse, ...) and worktree mode come next.
+> Status: all four planned chunks are built. Agents (Claude, Gemini via `agy`, any CLI such as Muse), project profiles,
+> branch or worktree workspaces, the Spec, Implement, Verify and Handover stages, guards, the control surface (gates, pause,
+> retry, guidance, stop), recovery of interrupted runs, and a Settings page with agent health all work end to end.
 
 ## Run it
 
@@ -27,6 +27,7 @@ from. Settings can be given as arguments or environment variables:
 | Address | `--urls=http://localhost:5999` | `ASPNETCORE_URLS` | `http://localhost:5870` |
 | Run data folder | `--MoonWalk:DataDir=<path>` | `MoonWalk__DataDir` | `runs` |
 | Project profiles | `--MoonWalk:ProjectsDir=<path>` | `MoonWalk__ProjectsDir` | `projects` |
+| Extra agents | `--MoonWalk:AgentsFile=<path>` | `MoonWalk__AgentsFile` | `agents.json` |
 
 ## Add a project
 
@@ -34,7 +35,24 @@ from. Settings can be given as arguments or environment variables:
 2. Set `repoPath` and `baseBranch`; adjust `guards` and `dirtyPolicy`.
 3. Restart MoonWalk, or `POST /api/projects/reload`. A profile with problems stays listed with its errors.
 
-Needs the `claude` CLI installed and logged in (agent `claude`) and `git` on the PATH.
+Needs `git` on the PATH and the CLI of whichever agent the project uses. The **Settings** page shows which agents are
+installed and which projects have problems.
+
+## Agents
+
+| Agent | What it is | What you see live |
+|---|---|---|
+| `claude` | Claude Code CLI (built in) | Streamed text, every tool call and result, cost |
+| `agy` | Gemini through the Antigravity CLI (built in) | Streamed text, every tool call and result, token usage |
+| any name in `agents.json` | A command line tool that takes a prompt and edits files (see `agents.json.sample`, e.g. Muse) | Its output, line by line |
+
+Notes:
+- **agy runs headless**, where it cannot ask for permission, and a denied shell command ends its session. By default MoonWalk
+  allows none and tells it to use file tools only; `agy.allowedCommands` in the profile opts in (`["*"]` also lets it run
+  `git commit` and `git push`, so only use that if you accept it).
+- Only Claude can be held to a tool list. For `agy` and generic agents MoonWalk asks for read-only in the Spec stage (agy plan
+  mode) and then **verifies** that no file changed.
+- A retry can switch agent ("retry from Implement with agy"), so you can compare agents on the same run.
 
 ## How a run works (branch workspace)
 
@@ -50,6 +68,23 @@ Needs the `claude` CLI installed and logged in (agent `claude`) and `git` on the
    **Release workspace** to switch back to the branch you were on.
 8. On failure or stop, partial work is kept as a local `wip(moonwalk)` commit on the run branch, the repository is
    restored, and the project is free again. Nothing is ever pushed or merged.
+
+### Branch or worktree
+
+| | `branch` (default) | `worktree` |
+|---|---|---|
+| Where | Your own project folder, on a run branch | A separate folder per run (`wt-moonwalk/<run>` beside the repo) |
+| Unity | Nothing to reimport | A new folder is imported before you can open it |
+| Parallel runs | One per project, the rest queue | As many as you like |
+| Your folder | Switched to the run branch until you release | Never touched |
+| Release | Back to your previous branch | Removes the folder; the branch stays |
+
+### If MoonWalk stops mid-run
+
+Unfinished runs come back as **Interrupted** and still own their workspace. **Recover run** continues where it stopped:
+if it was waiting for you, it asks the same question again; if an agent was cut off, that stage runs again as a retry
+and the agent is told to check what is already there. **Release workspace** is also available instead.
+Caveat: if MoonWalk is killed hard, an agent process it started may keep running; check for stray `claude`/`agy` processes.
 
 ## Steering a run
 
@@ -82,4 +117,7 @@ The browser tab title shows `(n)` while runs wait for you, and those rows are hi
 1. Skeleton and live UI (done)
 2. Claude agent, project profiles, branch workspace, Implement stage, guards (done)
 3. Control surface: gates, pause/resume, retry, guidance notes, Spec, Verify and Handover stages (done)
-4. Generic CLI agents (Gemini, Muse, others), agent health checks, resume of interrupted runs, worktree workspace mode
+4. agy and generic CLI agents, agent health and Settings page, recovery of interrupted runs, worktree mode (done)
+
+Ideas not built: killing agent processes when MoonWalk itself is killed (a Windows job object), notifications beyond the tab
+title, a dedicated adapter for Muse's JSON output, a playtest stage.

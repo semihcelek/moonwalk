@@ -66,13 +66,25 @@ A `note` on any decision is added to the guidance. An exception inside a stage b
 instead of killing the run. **Pause** is a request that takes effect before the next stage (an agent in the middle of a stage
 is never interrupted); a run that reaches a decision clears it. **Guidance** notes are stored on the run and included in every
 later agent prompt (Spec and Implement). A MoonWalk restart turns `Queued`, `Running`, `Paused` and `WaitingForHuman` runs into
-`Interrupted`; the workspace flag survives so the repository can still be released.
+`Interrupted`; the workspace flag survives so the workspace can still be released.
+
+### Recovery
+
+`POST /api/runs/{id}/recover` continues an `Interrupted` run. It re-validates the project and that the stage list is unchanged,
+checks the workspace is usable (`EnsureReadyAsync`: the right branch is checked out, or the worktree folder exists; otherwise 409
+with the reason), then restarts the loop. If the run was waiting when MoonWalk stopped (`Run.ResumeWait`, stored at load time),
+the same question is asked again with the stage's old result kept. Otherwise it resumes at the first stage that had not passed;
+an agent stage that was cut off runs again as attempt 2, so its prompt says "this is a retry, check git status and log first".
+The project lock was already re-taken at startup for branch-mode runs that held the workspace. Agent processes that MoonWalk
+started are not killed when MoonWalk is killed hard (no job object), so stray `claude`/`agy` processes can keep editing files.
 
 ### SpecStage
 
-Runs the agent with read-only tools (`Read`, `Grep`, `Glob`; `Edit`, `Write`, `NotebookEdit` and the shells are blocked, because
-Claude Code auto-approves read-only shell commands). It must answer with only the spec (Goal, Acceptance criteria, Out of scope,
-Where it likely lives). MoonWalk saves it as `spec.md` in the run folder, never in the repository.
+Asks the agent to be read-only (Claude: tools `Read`, `Grep`, `Glob` with `Edit`, `Write`, `NotebookEdit` and the shells blocked,
+because Claude Code auto-approves read-only shell commands; agy: plan mode). It must answer with only the spec (Goal, Acceptance
+criteria, Out of scope, Where it likely lives). **Afterwards the stage checks that no file changed**, since not every agent can
+enforce read-only; if one did, the stage fails and names the files. MoonWalk saves the spec as `spec.md` in the run folder,
+never in the repository.
 
 ### VerifyStage
 
@@ -105,12 +117,20 @@ Globs: `**` crosses folders, `*` and `?` stay in one segment, a trailing `/` mea
 
 ## Workspace modes (`src/MoonWalk/Workspace`)
 
-`workspace: "branch"` (default and the only implemented mode): the run works on `moonwalk/<run>-<slug>` inside the
-project's normal working folder. For Unity this avoids a second checkout and a full reimport. `"worktree"` (a separate
-folder per run, parallel runs) is reserved and rejected by validation until chunk 4.
+`IWorkspace` has two implementations, chosen by the profile's `workspace` (`WorkspaceFactory`). The engine and stages only see the
+interface (`PrepareAsync`, `EnsureReadyAsync`, `GetChangesAsync`, `StageAsync`, `CommitAsync`, `GetHandoverInfoAsync`,
+`AbortAsync`, `ReleaseAsync`) and the persisted `WorkspaceState` (`Mode`, `Branch`, `WorkDir`, `ReturnTo`, baseline).
+`StageContext.WorkDir` is the folder the agent and the verify steps run in.
 
-Because the folder is shared, the engine enforces **one run per project**: later runs stay `Queued` (with a System event
-naming the holder) until the holder finishes or is released.
+- **`branch`** (default): the run works on `moonwalk/<run>-<slug>` inside the project's normal working folder. For Unity this
+  avoids a second checkout and a full reimport. Because the folder is shared, the engine enforces **one run per project**:
+  later runs stay `Queued` (with a System event naming the holder) until the holder finishes or is released.
+- **`worktree`** (opt-in): `git worktree add -b <branch> <root>/<run> <start>`, where the start point is `origin/<base>` when the
+  local base can fast-forward to it and the local base otherwise; the root defaults to `wt-moonwalk` beside the repository
+  (`worktreeRoot` overrides it). The user's own checkout is never touched, so there is no lock and no dirty-tree policy, and
+  several runs of a project proceed in parallel. File, stage and commit logic is the branch workspace's, pointed at the worktree
+  folder. Release (and abort) removes the folder with `git worktree remove --force`; the run branch stays in the repository.
+  For Unity the cost is a full import of each new folder.
 
 | Moment | What happens |
 |---|---|
@@ -128,9 +148,41 @@ the agent's paths are touched, never other staged changes.
 
 ## Agents (`src/MoonWalk/Agents`)
 
-`IAgent.RunAsync(request, emit, ct)` runs one agent job and streams events through `emit`. `CliProcess` spawns the CLI with
-the prompt on stdin, reads stdout and stderr line by line, and kills the whole process tree on cancel or timeout.
-`AgentFactory` maps the profile's `agent` name to an adapter (`claude` for now; generic CLI adapters come in chunk 4).
+`IAgent.RunAsync(request, emit, ct)` runs one agent job and streams events through `emit`. `AgentRequest` carries the prompt,
+the work folder, optional tool lists and `ReadOnly`; `AgentResult` carries exit code, final text, cost, turns, usage and
+diagnostics. `CliProcess` spawns the CLI (prompt on stdin unless the adapter passes it differently), reads stdout and stderr
+line by line, and kills the whole process tree on cancel or timeout. It also resolves commands the way a shell does (PATH plus
+PATHEXT), so `muse` finds `muse.cmd`.
+
+`AgentRegistry` knows the built-in `claude` and `agy` plus the CLI agents in `agents.json`, creates adapters by name, and runs
+each agent's version command (15 s limit, default command names) for the health check. Profiles are validated against it.
+
+| Agent | Adapter | Notes |
+|---|---|---|
+| `claude` | `ClaudeAgent` + `ClaudeStreamParser` | Honours tool allow/deny lists |
+| `agy` | `AgyAgent` + `AgyStreamParser` | Gemini via Antigravity; details below |
+| custom | `GenericCliAgent` | Config in `agents.json`: `command`, `args` with `{prompt}`, `{promptFile}`, `{workdir}`, `timeoutMinutes`, `versionArgs`. Each stdout line becomes an `AgentText` event; stderr becomes a System event. `{prompt}` is refused for `.cmd`/`.bat` commands (argument injection) |
+
+### agy adapter
+
+Runs `agy -p <prompt> --output-format stream-json --mode accept-edits --print-timeout <n>m`. The prompt must be an argument
+(`-p` does not read stdin). A read-only request uses `--mode plan`. Observed stream (`agy` 1.5.5):
+
+| agy line | MoonWalk event |
+|---|---|
+| `init` | `System` "Agent session started" (conversation id kept) |
+| `step_update`, `agent_response`, `text_delta` | `AgentTextDelta`; the closing DONE step becomes `AgentText` (empty) |
+| `step_update`, `tool` ACTIVE (first time per step) | `AgentToolUse` (tool name and a hint from `Path`/`CommandLine`/...; data: parameters, long strings cut) |
+| `step_update`, `tool` DONE or ERROR | `AgentToolResult` (output summary; ERROR is shown as `error:`) |
+| `result` | final text, status (anything but `SUCCESS` is an error), turns, total tokens (no cost reported) |
+| stderr | `Warning`, and kept as `Diagnostics`, which the stage failure message includes |
+
+Headless agy cannot ask for permission, and a denied shell command ends the session (observed: the model ran
+`Get-ChildItem`, was auto-denied, and the run ended with no changes). So by default MoonWalk allows no commands and appends
+"shell commands are not permitted, use file tools only" to the prompt. `agy.allowedCommands` opts in: the entries are written to a
+temporary `--settings` file as `{"permissions":{"allow":["command(<entry>)"]}}` (an exact command line, or `*` for everything;
+prefix wildcards were observed not to match). agy has no tool allow/deny lists, so MoonWalk cannot stop it from running git
+commands once commands are allowed.
 
 ### Claude adapter
 
@@ -170,9 +222,12 @@ Runs `claude -p --output-format stream-json --verbose --include-partial-messages
 | `POST /api/runs/{id}/pause`, `/resume` | Pause before the next stage; resume (409 with a reason when not applicable) |
 | `POST /api/runs/{id}/guidance` `{ text }` | Add a note for later agent prompts |
 | `POST /api/runs/{id}/decision` `{ action, note?, agent?, retryFrom? }` | `approve`, `retry` or `stop` while the run is `WaitingForHuman` (409 otherwise) |
-| `POST /api/runs/{id}/release` | Give the working folder back (409 with a reason while the run is active or if the checkout fails) |
+| `POST /api/runs/{id}/release` | Give the workspace back (409 with a reason while the run is active or if the checkout or folder removal fails) |
+| `POST /api/runs/{id}/recover` | Continue an `Interrupted` run (409 with a reason otherwise) |
 | `GET /api/runs/{id}/files/{name}` | An artifact of the run (`spec.md`, `evidence/verify.log`, `handover.md`); only names listed on the run |
-| `GET /api/agents` | Known agent names |
+| `GET /api/agents` | Known agent names and definitions, plus `agents.json` errors |
+| `GET /api/agents/health` | Runs each agent's version command and reports availability |
+| `POST /api/agents/reload` | Re-read `agents.json` |
 | `GET /api/projects`, `POST /api/projects/reload` | Project profiles with validity and errors; reload from disk |
 | `GET /api/stream` | SSE: `run` events carry a full run snapshot on every change (drives the board) |
 | `GET /api/runs/{id}/stream` | SSE: `ev` events carry run events. Resumes from `Last-Event-ID` or `?after=` |
@@ -183,7 +238,9 @@ Vanilla ES module, no build step. Hash routing: `#/` is the board, `#/run/<id>` 
 commit, cost, elapsed), pause/resume/cancel buttons, a "workspace held" banner with the Release button, the **decision card**
 (approve, retry from a chosen stage with another agent and a note, stop), the stage timeline, a guidance box with the notes
 so far, the brief, and a panel with tabs: the live feed (follow mode, filters by text, tools and system) plus one tab per
-artifact. Rows waiting for you are highlighted on the board and the browser tab title shows `(n)`. Two EventSource
+artifact. `#/settings` lists every agent with its health and every project with its problems, and reloads both configs. An
+`Interrupted` run shows **Recover run**; a held worktree says so in the workspace banner. Rows waiting for you are highlighted
+on the board and the browser tab title shows `(n)`. Two EventSource
 connections: one global for snapshots, one per open run for events. Colors are CSS tokens on `:root`; the theme is dark
 only, and the layout collapses to one column below 900px.
 
@@ -202,10 +259,18 @@ Exercised against a throwaway repo with the real `claude` CLI:
   command that does not exist fails with a readable message.
 - Without an agent (`demo` project): gate, bad action and approve-a-failed-stage refusals, retry with note and agent,
   pause then resume, stop at handover, cancel while waiting, waiting runs become `Interrupted` after a restart.
+- Agents and workspaces (a scripted fake CLI agent, Muse in echo mode, real agy, a missing agent): health reported for all of
+  them; two parallel worktree runs on one project (separate folders, main checkout untouched and clean, commits on separate
+  branches, release removes the folder and keeps the branch); a Spec agent that edits a file is caught and stopped; a real agy run
+  (`write_file` streamed live, commit with the agy trailer, handover, release); Muse's `.cmd` shim resolved with its output
+  streamed line by line; a project naming an unknown agent is rejected at start.
+- Recovery: a run killed hard in the middle of an agent stage comes back `Interrupted` with the workspace held, a second run
+  queues behind it, recover re-runs the stage as attempt 2 with the retry note and finishes; a run killed while waiting at a gate is
+  asked the same question again and continues after approval; recovering a run that is not interrupted is refused.
 - The UI was rendered in headless Chrome at desktop and phone widths (decision card, stage timeline, guidance, artifact
-  tabs, board highlight).
+  tabs, board highlight, Settings page).
 
 ## Not built yet
 
-Generic CLI agents (Gemini, Muse, others), agent health checks, resuming `Interrupted` runs, the worktree workspace mode,
-notifications beyond the tab title. See the roadmap in `README.md`.
+Killing agent processes when MoonWalk is killed (job object), notifications beyond the tab title, a dedicated adapter for Muse's
+JSON output, a playtest stage. Muse is wired through the generic adapter and was only exercised in echo mode, not with a model.

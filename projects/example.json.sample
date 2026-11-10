@@ -6,11 +6,15 @@
   "baseBranch": "develop",
 
   // "branch": work on a run branch inside repoPath (no second checkout; best for Unity). One run per project at a time.
+  // "worktree": give each run its own git worktree folder so runs can go in parallel and your folder is never touched.
+  //             For Unity a new folder means a full import before you can open it. Uses worktreeRoot below.
   "workspace": "branch",
+  // "worktreeRoot": "C:\\Users\\me\\Projects\\MyGame-worktrees",   (default: wt-moonwalk beside the repository)
 
   // "refuse": do not start with uncommitted changes. "baseline": remember them and only commit what the agent changed.
   "dirtyPolicy": "refuse",
 
+  // "claude", "agy" (Gemini via Antigravity), or any agent defined in agents.json.
   "agent": "claude",
 
   // Spec: read-only agent writes acceptance criteria. Implement: agent changes the code, MoonWalk commits it.
@@ -44,5 +48,17 @@
     "timeoutMinutes": 45,
     "allowedTools": ["Read", "Edit", "Write", "Grep", "Glob", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)"],
     "disallowedTools": ["Bash(git commit:*)", "Bash(git push:*)", "Bash(git add:*)"]
+  },
+
+  // Used when "agent" is "agy".
+  "agy": {
+    "path": "agy",
+    "model": null,
+    "mode": "accept-edits",
+    "timeoutMinutes": 45,
+    // In headless mode agy cannot ask for permission and a denied shell command ends its session, so by default no command is
+    // allowed and the prompt tells it to use file tools only. List exact command lines to allow, or ["*"] for every command
+    // (which also lets it run git commit and git push).
+    "allowedCommands": []
   }
 }

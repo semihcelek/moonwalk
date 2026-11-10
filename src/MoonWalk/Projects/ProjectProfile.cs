@@ -55,6 +55,29 @@ public sealed class ClaudeOptions
 }
 
 /// <summary>One command the Verify stage runs in the repository (no shell: command plus arguments). Steps run in order and stop at the first failure.</summary>
+public sealed class AgyOptions
+{
+    public string Path { get; set; } = "agy";
+
+    public string? Model { get; set; }
+
+    /// <summary>Execution mode for implementing: accept-edits (edits without asking) or auto. Read-only requests always use plan.</summary>
+    public string Mode { get; set; } = "accept-edits";
+
+    public string? Effort { get; set; }
+
+    public int TimeoutMinutes { get; set; } = 45;
+
+    /// <summary>
+    /// Shell commands agy may run. In headless mode agy cannot ask, so a command that is not allowed is denied and ends the session.
+    /// By default none are allowed and the prompt tells the agent to use its file tools only. Entries are agy permission targets:
+    /// an exact command line, or <c>*</c> for every command (which also lets it run git commit and git push; only use it if you accept that).
+    /// </summary>
+    public string[] AllowedCommands { get; set; } = [];
+
+    public string[] ExtraArgs { get; set; } = [];
+}
+
 public sealed class VerifyStep
 {
     public string Name { get; set; } = "";
@@ -93,6 +116,11 @@ public sealed class ProjectProfile
     public GuardRules Guards { get; set; } = new();
 
     public ClaudeOptions Claude { get; set; } = new();
+
+    public AgyOptions Agy { get; set; } = new();
+
+    /// <summary>Worktree mode only: the folder that holds the per-run worktrees. Default: <c>wt-moonwalk</c> beside the repository.</summary>
+    public string? WorktreeRoot { get; set; }
 
     /// <summary>The built-in scripted project that needs no repository or agent.</summary>
     [JsonIgnore]

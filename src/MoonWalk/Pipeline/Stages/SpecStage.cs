@@ -4,12 +4,14 @@ using MoonWalk.Core;
 namespace MoonWalk.Pipeline.Stages;
 
 /// <summary>
-/// Turns the brief into a short spec with testable acceptance criteria. The agent gets read-only tools and answers with the
-/// spec text; MoonWalk saves it as spec.md in the run folder (never in the repository). Later stages and the reviewer use it.
+/// Turns the brief into a short spec with testable acceptance criteria. The agent is asked to be read-only (Claude: read-only tools,
+/// shells blocked; agy: plan mode) and answers with the spec text; MoonWalk saves it as spec.md in the run folder, never in the
+/// repository. Because not every agent can enforce read-only, the stage checks afterwards that no file changed.
 /// </summary>
 public sealed class SpecStage : IStage
 {
     private static readonly string[] ReadOnlyTools = ["Read", "Grep", "Glob"];
+
     // Claude Code auto-approves read-only shell commands, so shells are blocked outright to make "read-only" absolute.
     private static readonly string[] NoWriteTools = ["Edit", "Write", "NotebookEdit", "Bash", "PowerShell"];
 
@@ -22,7 +24,7 @@ public sealed class SpecStage : IStage
         context.Emit(EventTypes.System, $"Running {agent.Name} read-only to write the spec.");
 
         var result = await agent.RunAsync(
-            new AgentRequest(BuildPrompt(context), context.Profile.RepoPath, ReadOnlyTools, NoWriteTools),
+            new AgentRequest(BuildPrompt(context), context.WorkDir, ReadOnlyTools, NoWriteTools, ReadOnly: true),
             context.Emit,
             ct);
 
@@ -30,15 +32,31 @@ public sealed class SpecStage : IStage
         {
             context.AddCost(cost);
         }
+        if (result.Usage is { } usage)
+        {
+            context.Emit(EventTypes.System, $"Agent used {usage}.");
+        }
 
         if (result.TimedOut)
         {
-            return StageResult.Failed($"The agent timed out after {context.Profile.Claude.TimeoutMinutes} minutes.");
+            return StageResult.Failed("The agent timed out.");
         }
         if (result.ExitCode != 0 || result.IsError)
         {
             return StageResult.Failed($"The agent failed (exit {result.ExitCode}).");
         }
+
+        if (context.Workspace is { } workspace)
+        {
+            var changes = await workspace.Workspace.GetChangesAsync(workspace.State, ct);
+            if (changes.Paths.Count > 0)
+            {
+                return StageResult.Failed(
+                    $"The spec agent changed {changes.Paths.Count} file(s) even though it was asked to be read-only: "
+                    + string.Join(", ", changes.Paths.Take(6)) + ". Revert them and retry, or use another agent for this stage.");
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(result.Text))
         {
             return StageResult.Failed("The agent returned no spec.");

@@ -11,7 +11,7 @@ public sealed record ProjectEntry(ProjectProfile Profile, string? File, IReadOnl
 }
 
 /// <summary>Loads project profiles from <c>projects/*.json</c> and validates them. A broken profile stays listed with its errors.</summary>
-public sealed class ProjectRegistry(string projectsDir)
+public sealed class ProjectRegistry(string projectsDir, AgentRegistry agents)
 {
     private static readonly JsonSerializerOptions ReadOptions = new(Json.Options)
     {
@@ -63,7 +63,7 @@ public sealed class ProjectRegistry(string projectsDir)
         }
     }
 
-    private static ProjectEntry Load(string file, List<ProjectEntry> existing)
+    private ProjectEntry Load(string file, List<ProjectEntry> existing)
     {
         ProjectProfile profile;
         try
@@ -86,7 +86,7 @@ public sealed class ProjectRegistry(string projectsDir)
         return new ProjectEntry(profile, file, Validate(profile, existing));
     }
 
-    private static List<string> Validate(ProjectProfile p, List<ProjectEntry> existing)
+    private List<string> Validate(ProjectProfile p, List<ProjectEntry> existing)
     {
         var errors = new List<string>();
 
@@ -112,19 +112,15 @@ public sealed class ProjectRegistry(string projectsDir)
         {
             errors.Add("workspace 'none' is only for the built-in demo project.");
         }
-        else if (p.Workspace == WorkspaceMode.Worktree)
-        {
-            errors.Add("workspace 'worktree' is not implemented yet; use 'branch'.");
-        }
 
         if (string.IsNullOrWhiteSpace(p.BaseBranch))
         {
             errors.Add("baseBranch is required.");
         }
 
-        if (!AgentFactory.IsKnown(p.Agent))
+        if (!agents.IsKnown(p.Agent))
         {
-            errors.Add($"Unknown agent '{p.Agent}'. Known: {string.Join(", ", AgentFactory.Known)}.");
+            errors.Add($"Unknown agent '{p.Agent}'. Known: {string.Join(", ", agents.Names)}.");
         }
 
         if (p.Stages.Length == 0)

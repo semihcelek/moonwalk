@@ -1,0 +1,24 @@
+{
+  // Copy to agents.json and edit. MoonWalk always knows two agents without any config:
+  //   "claude"  the Claude Code CLI  (live text, tool calls and cost)
+  //   "agy"     Gemini through the Antigravity CLI  (live text and tool calls)
+  // Anything else goes here: a command line tool that takes a prompt and edits files in its working folder.
+  // Name an agent in a project profile with "agent": "<name>". Check what is installed on the Settings page.
+  "agents": [
+    {
+      "name": "muse",
+      "command": "muse",
+
+      // {promptFile}: path of a temp file holding the prompt. {prompt}: the prompt text itself (not allowed for .cmd/.bat commands).
+      // {workdir}: the folder to work in. With neither prompt token the prompt is written to stdin.
+      "args": ["exec", "--prompt-file", "{promptFile}", "--workspace", "{workdir}"],
+
+      "timeoutMinutes": 45,
+
+      // The agent counts as installed when this exits with 0.
+      "versionArgs": ["--version"]
+
+      // Not verified against a real model run: check how your Muse is configured to approve tool use in headless mode.
+    }
+  ]
+}

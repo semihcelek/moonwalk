@@ -122,9 +122,67 @@ function route() {
   teardownRunView();
   onRunsChanged = null;
   const match = location.hash.match(/^#\/run\/(.+)$/);
-  document.getElementById('navRuns').classList.toggle('active', !match);
+  const settings = location.hash === '#/settings';
+  document.getElementById('navRuns').classList.toggle('active', !match && !settings);
+  document.getElementById('navSettings').classList.toggle('active', settings);
   if (match) showRun(decodeURIComponent(match[1]));
+  else if (settings) showSettings();
   else showBoard();
+}
+
+/* ---------------------------------------------------------------- settings */
+
+const badge = (cls, text) => h('span', { class: `pill ${cls}` }, text);
+
+async function showSettings() {
+  const agentsBox = h('div', { class: 'cards' }, h('div', { class: 'hint' }, 'Checking agents…'));
+  const projectsBox = h('div', { class: 'cards' });
+  const notes = h('div', { class: 'hint' });
+
+  const load = async () => {
+    try {
+      const health = await api('/api/agents/health');
+      put(agentsBox, health.agents.map((a) => h('div', { class: 'card' },
+        h('div', { class: 'card-head' }, h('b', {}, a.name), h('span', { class: 'muted' }, a.kind),
+          a.available ? badge('s-done', 'Available') : badge('s-failed', 'Not available')),
+        h('div', { class: 'card-line' }, a.available ? (a.version ?? a.command) : a.detail),
+        h('div', { class: 'card-line faint' }, `command: ${a.command}`))));
+      put(notes, health.errors.map((e) => h('div', { class: 'error-box' }, `agents.json: ${e}`)));
+    } catch (err) {
+      put(agentsBox, h('div', { class: 'error-box' }, `Could not check agents: ${err.message}`));
+    }
+
+    try {
+      const projects = await api('/api/projects');
+      put(projectsBox, projects.map((p) => h('div', { class: 'card' },
+        h('div', { class: 'card-head' }, h('b', {}, p.name),
+          p.valid ? badge('s-done', 'Ready') : badge('s-failed', 'Problems')),
+        p.name === 'demo'
+          ? h('div', { class: 'card-line' }, 'Built in. Scripted stages, no repository or agent needed.')
+          : h('div', { class: 'card-line' }, `${p.agent} · ${p.workspace} workspace · base ${p.baseBranch}`),
+        h('div', { class: 'card-line faint' }, `stages: ${p.stages.join(' → ')}`),
+        p.repoPath && h('div', { class: 'card-line faint' }, p.repoPath),
+        ...(p.errors ?? []).map((e) => h('div', { class: 'card-error' }, e)))));
+    } catch (err) {
+      put(projectsBox, h('div', { class: 'error-box' }, `Could not load projects: ${err.message}`));
+    }
+  };
+
+  const reload = h('button', {
+    class: 'btn small', type: 'button',
+    onclick: () => attempt(async () => {
+      await post('/api/agents/reload');
+      await post('/api/projects/reload');
+      put(agentsBox, h('div', { class: 'hint' }, 'Checking agents…'));
+      await load();
+    }),
+  }, 'Reload config and re-check');
+
+  view.replaceChildren(
+    h('div', { class: 'page-head' }, h('h1', {}, 'Settings'), reload),
+    h('h2', { class: 'section-title' }, 'Agents'), notes, agentsBox,
+    h('h2', { class: 'section-title' }, 'Projects'), projectsBox);
+  load();
 }
 
 window.addEventListener('hashchange', route);
@@ -323,6 +381,7 @@ async function showRun(id) {
       canPause && h('button', { class: 'btn small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/pause`)) }, 'Pause'),
       (r.status === 'Paused' || (r.pauseRequested && r.status === 'Running')) &&
         h('button', { class: 'btn primary small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/resume`)) }, r.status === 'Paused' ? 'Resume' : 'Cancel pause'),
+      r.status === 'Interrupted' && h('button', { class: 'btn primary small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/recover`)) }, 'Recover run'),
       live && h('button', { class: 'btn danger small', type: 'button', onclick: () => cancelRun(r.id) }, 'Cancel run'));
     guidanceBox.hidden = !live;
     noteList.replaceChildren(...(r.guidance ?? []).map((g) =>
@@ -338,11 +397,15 @@ async function showRun(id) {
       r.costUsd != null && h('span', {}, 'Cost ', h('b', {}, `$${r.costUsd.toFixed(3)}`)),
       h('span', {}, 'Elapsed ', h('b', {}, duration(r.createdAt, isActive(r.status) ? null : r.finishedAt ?? r.updatedAt))));
     const releasable = r.workspaceHeld && !['Queued', 'Running', 'Paused', 'WaitingForHuman'].includes(r.status);
+    const worktree = r.workspaceMode === 'Worktree';
+    const heldText = worktree
+      ? `The change lives in ${r.workDir} (branch ${r.branch}); your own working folder is untouched. ` +
+        (releasable ? 'Release removes that folder; the branch stays for you to merge.' : 'When this run is finished you can release it to remove that folder.')
+      : `The repository is on ${r.branch}. Play or review it there` +
+        (releasable ? `, then release to switch back to ${r.returnTo}. The next run for this project waits until you do.`
+          : `. When this run is finished you can release it to switch back to ${r.returnTo}.`);
     banner.replaceChildren(...(r.workspaceHeld ? [h('div', { class: 'notice' },
-      h('div', {}, h('b', {}, 'Workspace held. '),
-        `The repository is on ${r.branch}. Play or review it there` +
-          (releasable ? `, then release to switch back to ${r.returnTo}. The next run for this project waits until you do.`
-            : `. When this run is finished you can release it to switch back to ${r.returnTo}.`)),
+      h('div', {}, h('b', {}, worktree ? 'Worktree held. ' : 'Workspace held. '), heldText),
       releasable && h('button', { class: 'btn primary small', type: 'button', onclick: () => releaseRun(r.id) }, 'Release workspace'))] : []));
     stagesBox.replaceChildren(...r.stages.map((s) =>
       h('div', { class: `stage s-${s.status.toLowerCase()}` },

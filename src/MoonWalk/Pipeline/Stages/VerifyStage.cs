@@ -46,7 +46,7 @@ public sealed class VerifyStage : IStage
             try
             {
                 var (exit, timedOut) = await CliProcess.RunAsync(
-                    step.Command, step.Args, context.Profile.RepoPath, "", TimeSpan.FromMinutes(step.TimeoutMinutes), OnLine, OnLine, ct);
+                    step.Command, step.Args, context.WorkDir, "", TimeSpan.FromMinutes(step.TimeoutMinutes), OnLine, OnLine, ct);
 
                 if (timedOut)
                 {

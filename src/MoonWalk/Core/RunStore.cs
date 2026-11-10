@@ -24,6 +24,7 @@ public sealed class RunStore
             }
             if (run.Status is RunStatus.Queued or RunStatus.Running or RunStatus.Paused or RunStatus.WaitingForHuman)
             {
+                run.ResumeWait = run.Status == RunStatus.WaitingForHuman ? run.Waiting : null;
                 run.Status = RunStatus.Interrupted;
                 run.Error = "MoonWalk stopped while this run was in progress. If it still holds the workspace, release it from the run page.";
                 run.Waiting = null;

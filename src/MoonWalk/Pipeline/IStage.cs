@@ -47,6 +47,9 @@ public sealed class StageContext
 
     public IAgent? Agent { get; init; }
 
+    /// <summary>The folder the agent works in: the project's own folder, or the run's worktree.</summary>
+    public string WorkDir => Workspace?.State.WorkDir is { Length: > 0 } dir ? dir : Profile.RepoPath;
+
     /// <summary>1 for the first time this stage runs in the run, 2 after a retry, and so on.</summary>
     public int Attempt { get; init; } = 1;
 

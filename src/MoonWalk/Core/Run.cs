@@ -65,6 +65,15 @@ public sealed class Run
     public string? Agent { get; set; }
     public string? Branch { get; set; }
     public string? ReturnTo { get; set; }
+
+    /// <summary>"Branch" or "Worktree", once the workspace exists.</summary>
+    public string? WorkspaceMode { get; set; }
+
+    /// <summary>The folder the agent works in (the repository, or the worktree).</summary>
+    public string? WorkDir { get; set; }
+
+    /// <summary>Set when MoonWalk stopped while the run was waiting for you: the same question is asked again on recovery.</summary>
+    public WaitState? ResumeWait { get; set; }
     public string? Commit { get; set; }
     public double? CostUsd { get; set; }
 

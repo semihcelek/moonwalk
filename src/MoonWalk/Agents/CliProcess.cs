@@ -16,7 +16,7 @@ public static class CliProcess
         Action<string> onStderr,
         CancellationToken ct)
     {
-        var psi = new ProcessStartInfo(exe)
+        var psi = new ProcessStartInfo(Resolve(exe))
         {
             WorkingDirectory = workDir,
             RedirectStandardInput = true,
@@ -70,6 +70,45 @@ public static class CliProcess
         await Task.WhenAll(stdout, stderr);
         return (process.ExitCode, timedOut);
     }
+
+    /// <summary>
+    /// Finds a command the way a shell would (PATH plus PATHEXT), so "muse" finds muse.cmd. CreateProcess alone only appends ".exe".
+    /// A command with a folder part, or one that is not found, is returned unchanged.
+    /// </summary>
+    public static string Resolve(string command)
+    {
+        if (command.IndexOfAny(['\\', '/']) >= 0 || !OperatingSystem.IsWindows())
+        {
+            return command;
+        }
+
+        var extensions = (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
+            .Split(';', StringSplitOptions.RemoveEmptyEntries);
+        var names = Path.HasExtension(command) ? [command] : extensions.Select(e => command + e).Prepend(command).ToArray();
+
+        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var name in names)
+            {
+                try
+                {
+                    var candidate = Path.Combine(dir.Trim('"'), name);
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+                catch (ArgumentException)
+                {
+                    // A malformed PATH entry: skip it.
+                }
+            }
+        }
+        return command;
+    }
+
+    public static bool IsBatchFile(string resolved) =>
+        resolved.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || resolved.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
 
     private static async Task PumpAsync(StreamReader reader, Action<string> onLine)
     {

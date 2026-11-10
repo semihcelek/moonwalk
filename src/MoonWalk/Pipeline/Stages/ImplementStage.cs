@@ -20,25 +20,26 @@ public sealed class ImplementStage : IStage
         var profile = context.Profile;
 
         context.SetStageAgent(agent.Name);
-        context.Emit(EventTypes.System, $"Running {agent.Name} in {profile.RepoPath}.");
+        context.Emit(EventTypes.System, $"Running {agent.Name} in {context.WorkDir}.");
 
-        var result = await agent.RunAsync(new AgentRequest(BuildPrompt(context), profile.RepoPath), context.Emit, ct);
+        var result = await agent.RunAsync(new AgentRequest(BuildPrompt(context), context.WorkDir), context.Emit, ct);
 
         if (result.CostUsd is { } cost)
         {
             context.AddCost(cost);
         }
         context.Emit(EventTypes.System,
-            $"Agent finished: exit {result.ExitCode}, {result.NumTurns?.ToString() ?? "?"} turns" + (result.CostUsd is { } c ? $", ${c:0.000}." : "."),
-            new() { ["exitCode"] = result.ExitCode, ["turns"] = result.NumTurns, ["costUsd"] = result.CostUsd, ["sessionId"] = result.SessionId });
+            $"Agent finished: exit {result.ExitCode}" + (result.NumTurns is { } turns ? $", {turns} turns" : "")
+            + (result.CostUsd is { } c ? $", ${c:0.000}" : "") + (result.Usage is { } usage ? $", {usage}" : "") + ".",
+            new() { ["exitCode"] = result.ExitCode, ["turns"] = result.NumTurns, ["costUsd"] = result.CostUsd, ["usage"] = result.Usage, ["sessionId"] = result.SessionId });
 
         if (result.TimedOut)
         {
-            return StageResult.Failed($"The agent timed out after {profile.Claude.TimeoutMinutes} minutes.");
+            return StageResult.Failed("The agent timed out.");
         }
         if (result.ExitCode != 0 || result.IsError)
         {
-            return StageResult.Failed($"The agent failed (exit {result.ExitCode}). {Short(result.Text)}".Trim());
+            return StageResult.Failed($"The agent failed (exit {result.ExitCode}). {Short(result.Text)} {Short(result.Diagnostics)}".Trim());
         }
         if (result.Text is { } text && text.TrimStart().StartsWith("STATUS: BLOCKED", StringComparison.OrdinalIgnoreCase))
         {
@@ -54,13 +55,13 @@ public sealed class ImplementStage : IStage
         }
         if (changes.Paths.Count == 0)
         {
-            return StageResult.Failed("The agent finished without changing any file. " + Short(result.Text));
+            return StageResult.Failed($"The agent finished without changing any file. {Short(result.Text)} {Short(result.Diagnostics, 400)}".Trim());
         }
 
         context.Emit(EventTypes.System, $"Agent changed {changes.Paths.Count} file(s).",
             new() { ["files"] = changes.Paths.Take(100).ToArray() });
 
-        var lines = await workspace.Workspace.StageAsync(changes.Paths, context.RunDir, ct);
+        var lines = await workspace.Workspace.StageAsync(workspace.State, changes.Paths, context.RunDir, ct);
         var violations = Guards.Check(changes.Paths, lines, profile.Guards);
         if (violations.Count > 0)
         {
@@ -72,7 +73,7 @@ public sealed class ImplementStage : IStage
         }
         context.Emit(EventTypes.System, $"Guards passed ({changes.Paths.Count} files, {lines} lines).");
 
-        var sha = await workspace.Workspace.CommitAsync(changes.Paths, BuildCommitMessage(context, agent, result), context.RunDir, ct);
+        var sha = await workspace.Workspace.CommitAsync(workspace.State, changes.Paths, BuildCommitMessage(context, agent, result), context.RunDir, ct);
         context.UpdateRun(r => r.Commit = sha);
         context.Emit(EventTypes.System, $"Committed {sha} on {workspace.State.Branch}.", new() { ["commit"] = sha });
 
@@ -140,6 +141,10 @@ public sealed class ImplementStage : IStage
         if (agent.Name == "claude")
         {
             sb.AppendLine("Co-Authored-By: Claude <noreply@anthropic.com>");
+        }
+        else if (agent.Name == "agy")
+        {
+            sb.AppendLine("Co-Authored-By: Gemini <noreply@google.com>");
         }
         return sb.ToString();
     }
