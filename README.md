@@ -77,7 +77,10 @@ Notes:
 3. **Spec** (optional): a read-only agent writes acceptance criteria to `spec.md`. A gate after it lets you review.
 4. **Implement**: the agent works on the branch and cannot commit or push. MoonWalk checks what changed against the
    guards and commits only those files.
-5. **Verify**: runs your commands (compile, lint, tests) and saves the output as evidence.
+5. **Verify**: runs your commands (compile, lint, tests) and saves the output as evidence. For a Unity project a verify step can be
+   `{ "name": "unity compile", "unityMcp": "http://127.0.0.1:8080/mcp" }`: MoonWalk asks the open Editor (through unity-mcp) to refresh and
+   compile and fails the run on any `error CS` in the Console. It costs no agent quota, needs the Editor open on the project folder, and
+   `"optional": true` skips it with a warning when the Editor is closed.
 6. **Handover**: writes `handover.md` and waits for you. The repository stays on the run branch so you can play it. In a Unity
    project it first commits the `.meta` files the Editor created during the run (they hold the asset GUIDs that scenes refer to) and
    lists new files that still have none; open the project and **Retry** from Handover to commit those. `commitMetaFiles: false` in
@@ -260,8 +263,30 @@ base branch the first time). Then check out `waiting-review` once and test every
 - A merged run shows an *in waiting-review* tag. Merging it again says it is already there.
 - **Settings > Review branch** shows what is in it, with **Check out for testing** (refused while a run is using the repository) and
   **Reset to base** (starts a new round: the branch goes back to the base, the runs' own branches stay; refused while it is checked out).
-- For unattended batches, tick **Merge each finished run into the review branch** (or set `auto.mergeToReview`): every run that finishes Done
-  is merged as it completes, and one that conflicts stays unmerged with a warning in its feed.
+- **Merging is always your decision.** There is no automatic merge into the review branch (the old `auto.mergeToReview` is gone and ignored if
+  a request still sends it). Test a result first (see below), then press **Merge into review branch**. On a feature run the button says
+  **Merge feature into review branch**: it merges the whole feature as it stands, so merge once when the feature is done.
+
+### Checking out a result to test it
+
+Before merging anything you can put any result in your working folder:
+
+- On a finished run: **Check out this result** (its branch), or on a feature run **Check out this step** (the exact commit that run ended on,
+  detached, so you can play step 1, 2 and 3 of a feature one by one) and **Check out feature** (the feature branch as it is now).
+- **Settings > Review branch**: **Check out for testing** (the review branch), **Back to master** (your base branch) and **Clean working folder**.
+- A checkout is refused while a run is using the repository.
+
+If git cannot switch because of uncommitted changes (in a Unity project usually `.meta` files and stray files), a window lists exactly what is
+dirty (modified, deleted, untracked, how many `.meta`) and offers two buttons:
+
+- **Save in stash and clean** puts everything into a git stash (`git stash list` shows it; the newest 5 made by MoonWalk are kept) and then switches.
+  Nothing is lost.
+- **Delete permanently** resets tracked files and removes untracked ones (`git reset --hard` and `git clean -fd`, which never touch git-ignored
+  folders such as Unity's Library). It cannot be undone.
+
+The server only discards what you were shown: the list carries a fingerprint, and if the folder changed since you looked (Unity wrote a file),
+nothing is discarded and you get the new list. The same **Review and clean...** button appears next to the "uncommitted changes" note in the New
+run dialog, so a dirty folder no longer blocks a run.
 
 ### Delegating with your main agents
 

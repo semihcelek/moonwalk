@@ -148,6 +148,15 @@ public sealed class VerifyStep
     public string[] Args { get; set; } = [];
 
     public int TimeoutMinutes { get; set; } = 15;
+
+    /// <summary>
+    /// Instead of a command: ask the open Unity Editor (its unity-mcp HTTP server, for example http://127.0.0.1:8080/mcp) to compile the scripts
+    /// and fail on any compile error in the Console. Costs no agent quota; needs the Editor open on the project folder.
+    /// </summary>
+    public string? UnityMcp { get; set; }
+
+    /// <summary>With <see cref="UnityMcp"/>: when the Editor cannot be reached, skip the step with a warning instead of failing the stage.</summary>
+    public bool Optional { get; set; }
 }
 
 /// <summary>

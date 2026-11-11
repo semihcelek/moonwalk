@@ -142,6 +142,17 @@ Runs the profile's `verify` steps in order in the repository: `command` plus `ar
 into the feed as `System` events and is saved as `evidence/verify.log`. The first failing step fails the stage, and the last
 15 lines of its output become the failure message that is passed to the next attempt. A command that cannot be started is a failure with a clear message.
 
+A step with `unityMcp` (an http URL) is a built-in Unity compile check instead of a command (`Pipeline/UnityCompileCheck.cs`, no agent, no quota):
+a minimal MCP streamable-HTTP client (`initialize`, `tools/call`, `resources/read`; replies are plain JSON or an SSE stream whose `data:` lines may
+begin with notifications, matched by id) reads `mcpforunity://editor/state`, calls `refresh_unity` (`mode force`, `scope scripts`, `compile request`,
+`wait_for_ready`), then polls the editor state until it is neither compiling nor reloading (calls that fail meanwhile mean a domain reload; only the
+step's `timeoutMinutes` ends the wait; a 6 s grace covers "nothing changed, no compile started"), and finally `read_console` (errors, count 200)
+and keeps the entries that match `error CS\d+`, de-duplicated. Any such error fails the step with the first 15 lines (file, line, code, message).
+The Console is not cleared (Unity clears it on recompile by default, and a persisting error is still a real error). An unreachable server fails the
+step ("is the Editor open on the project?") unless `"optional": true`, which skips it with a Warning event; the stage then still passes, so the run
+still gets the *verified* tag even though nothing compiled. Use `optional` only when that is acceptable. It compiles whatever is in the Editor's project folder; in branch mode that is the
+folder the run works in. Spiked against Unity 6000.3 with unity-mcp 3.4.11.
+
 ### HandoverStage
 
 Writes `handover.md` (branch, stage results, commits and diff stat against the base branch, guidance given, what to do next) and
@@ -483,12 +494,27 @@ old tip as a guard, so a concurrent change fails instead of being overwritten. T
 `ReviewCommit`. If the review branch is the one checked out, a ref update would leave the working folder out of sync, so a real
 `git merge --no-ff` is used instead, only when `git status` shows no changes to tracked files, and a conflict is aborted.
 
-`CheckoutAsync` switches the repository to the review branch and is refused while any run of the project is active or holds the workspace
-(git itself refuses if local changes would be overwritten). `ResetAsync` runs `git branch -f <review> <base>` (refused while it is checked
-out) and clears the merge marks of the project's runs. `StatusAsync` lists the first-parent merges with their run ids.
-`AutoMode.MergeToReview` merges a run right after it finishes Done (after the automatic release); a conflict is a Warning event and the run stays Done.
+`ResetAsync` runs `git branch -f <review> <base>` (refused while it is checked out) and clears the merge marks of the project's runs.
+`StatusAsync` lists the first-parent merges with their run ids. There is no automatic merge: `AutoMode` has only `Plan` and `Implementation`
+(a request that still sends `mergeToReview` has it ignored), and merging into the review branch is always an explicit action.
 
-API: `GET /api/review?project=`, `POST /api/runs/{id}/merge-review`, `POST /api/review/checkout`, `POST /api/review/reset`.
+### Checking out revisions and clearing a dirty folder (`ReviewService.Checkout.cs`)
+
+`CheckoutAsync(project, target, discard?, fingerprint?)` switches the repository to `review`, `base`, `run:<id>` or `feature:<name>`, under the
+per-repository lock, and is refused while any run of the project is active or holds the workspace. A run target is its branch; for a feature run
+whose branch has moved on it is the exact commit that run ended on (`run.Commit`), checked out detached. When git refuses (typically untracked files
+that the target also has) the reply is 409 with the dirty list.
+
+`DirtyAsync` is `git status --porcelain=v1 -z --untracked-files=all`: kind (modified, added, deleted, renamed, untracked), whether the path is a
+`.meta`, whether the profile's `ignorePaths` match it, first 300 shown, plus counts and a **fingerprint** (SHA-256 of the sorted status codes and paths).
+`discard` is `stash` (`git stash push --include-untracked -m "moonwalk: before checkout (N files)"`, then older MoonWalk stashes beyond the newest 5 are
+dropped, highest index first, other stashes untouched) or `delete` (`git reset --hard HEAD` then `git clean -fd`; no `-x`, so git-ignored folders such as
+Unity's Library stay). Both are refused unless the request's fingerprint equals the current one, so a file that appeared after the person looked is
+never thrown away unseen (409 with the new list). The UI shows the list in a dialog with both buttons; the same dialog serves the New run dialog's
+"uncommitted changes" preflight note through `POST /api/projects/{name}/discard`.
+
+API: `GET /api/review?project=`, `POST /api/runs/{id}/merge-review`, `POST /api/review/checkout` (target `review`), `POST /api/review/reset`,
+`GET /api/projects/{name}/dirty`, `POST /api/projects/{name}/checkout` `{ target, discard?, fingerprint? }`, `POST /api/projects/{name}/discard` `{ mode, fingerprint }`.
 
 ## Delegation guide (`GuideBuilder`)
 
@@ -522,6 +548,7 @@ automation flags, and how to follow results, and to answer with a split, a `moon
 | `POST /api/runs/{id}/release` | Give the workspace back (409 with a reason while the run is active or if the checkout or folder removal fails) |
 | `POST /api/runs/{id}/recover` | Continue an `Interrupted` run (409 with a reason otherwise) |
 | `POST /api/runs/{id}/reopen` `{ note, from?, agent?, model?, effort?, auto? }` | Continue a finished run on its own branch as a new round (409 with a reason if active, interrupted, the note is empty or the branch is gone) |
+| `GET /api/projects/{name}/dirty`, `POST /api/projects/{name}/checkout`, `POST /api/projects/{name}/discard` | Uncommitted files with a fingerprint; check out `review`, `base`, `run:<id>` or `feature:<name>` (409 with the dirty list when git refuses); stash or delete the dirty files, only when the fingerprint still matches |
 | `GET /api/runs/{id}/diff` | The run's git diff against its base branch, or for a feature run only its own commits (file list and patch) |
 | `POST /api/runs/{id}/archive`, `/unarchive`, `DELETE /api/runs/{id}` | Hide, restore or permanently delete a finished run (409 while active; delete also while it holds the workspace) |
 | `GET /api/runs/{id}/files/{name}` | An artifact of the run (`spec.md`, `evidence/verify.log`, `handover.md`); only names listed on the run |

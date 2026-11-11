@@ -152,9 +152,9 @@ public sealed class ProjectRegistry(string projectsDir, AgentRegistry agents)
             errors.Add($"Gate '{gate}' is not one of the project's stages.");
         }
 
-        foreach (var step in p.Verify.Where(s => string.IsNullOrWhiteSpace(s.Command)))
+        foreach (var step in p.Verify.Where(s => string.IsNullOrWhiteSpace(s.Command) && string.IsNullOrWhiteSpace(s.UnityMcp)))
         {
-            errors.Add($"Verify step '{step.Name}' has no command.");
+            errors.Add($"Verify step '{step.Name}' has no command (or unityMcp url).");
         }
 
         if (p.Stages.Contains("Verify", StringComparer.OrdinalIgnoreCase) && p.Verify.Length == 0)

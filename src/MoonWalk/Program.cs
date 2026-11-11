@@ -41,14 +41,14 @@ builder.Services.AddSingleton(new RunStore(runsRoot));
 builder.Services.AddSingleton(sp => new ReviewService(
     sp.GetRequiredService<ProjectRegistry>(),
     sp.GetRequiredService<RunStore>(),
-    sp.GetRequiredService<EventHub>()));
+    sp.GetRequiredService<EventHub>(),
+    sp.GetRequiredService<FeatureStore>()));
 builder.Services.AddSingleton(new FeatureStore(Path.Combine(paths.RunsRoot, "_features")));
 builder.Services.AddSingleton(sp => new RunEngine(
     sp.GetRequiredService<RunStore>(),
     sp.GetRequiredService<EventHub>(),
     sp.GetRequiredService<ProjectRegistry>(),
     sp.GetRequiredService<AgentRegistry>(),
-    sp.GetRequiredService<ReviewService>(),
     sp.GetRequiredService<FeatureStore>(),
     runsRoot));
 

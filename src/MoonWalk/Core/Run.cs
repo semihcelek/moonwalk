@@ -69,9 +69,6 @@ public sealed class AutoMode
     public bool Plan { get; set; }
     public bool Implementation { get; set; }
 
-    /// <summary>After a run finishes Done, also merge its branch into the project's review branch (a conflict leaves it unmerged and says so).</summary>
-    public bool MergeToReview { get; set; }
-
     public bool Full => Plan && Implementation;
     public bool Any => Plan || Implementation;
 }

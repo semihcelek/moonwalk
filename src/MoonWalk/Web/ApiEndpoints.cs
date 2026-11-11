@@ -15,6 +15,10 @@ public sealed record SaveBriefRequest(string? Name, string? Text);
 
 public sealed record BranchRequest(string? Project, string? Branch, bool Force = false);
 
+public sealed record CheckoutRequest(string? Target, string? Discard = null, string? Fingerprint = null);
+
+public sealed record DiscardRequest(string? Mode, string? Fingerprint);
+
 public sealed record SavePresetRequest(string? Name, Dictionary<string, AgentChoice>? Stages);
 
 public static class ApiEndpoints
@@ -84,6 +88,11 @@ public static class ApiEndpoints
         result.Ok
             ? Results.Json(new { message = result.Message, commit = result.Commit }, Json.Options)
             : Results.Json(new { error = result.Message, conflicts = result.Conflicts }, Json.Options, statusCode: StatusCodes.Status409Conflict);
+
+    private static IResult CheckoutReply(CheckoutResult result) =>
+        result.Ok
+            ? Results.Ok(new { message = result.Message })
+            : Results.Json(new { error = result.Message, dirty = result.Dirty }, Json.Options, statusCode: StatusCodes.Status409Conflict);
 
     private static IResult Reply((bool Ok, string Message) result) =>
         result.Ok ? Results.Ok(new { message = result.Message }) : Results.Conflict(new { error = result.Message });
@@ -240,7 +249,18 @@ public static class ApiEndpoints
             ReviewReply(await review.MergeRunAsync(id, ct)));
 
         app.MapPost("/api/review/checkout", async (BranchRequest request, ReviewService review, CancellationToken ct) =>
-            ReviewReply(await review.CheckoutAsync(request.Project ?? "", ct)));
+            CheckoutReply(await review.CheckoutAsync(request.Project ?? "", "review", null, null, ct)));
+
+        // What is uncommitted in the project's folder, with a fingerprint that a discard must echo back.
+        app.MapGet("/api/projects/{name}/dirty", async (string name, ReviewService review, CancellationToken ct) =>
+            await review.DirtyAsync(name, ct) is { } report ? Results.Json(report, Json.Options) : Results.NotFound(new { error = "No repository for this project." }));
+
+        // Check out a revision to test it: review, base, run:<id> or feature:<name>. discard ("stash" or "delete") needs the fingerprint of the list the person saw.
+        app.MapPost("/api/projects/{name}/checkout", async (string name, CheckoutRequest request, ReviewService review, CancellationToken ct) =>
+            CheckoutReply(await review.CheckoutAsync(name, request.Target ?? "", request.Discard, request.Fingerprint, ct)));
+
+        app.MapPost("/api/projects/{name}/discard", async (string name, DiscardRequest request, ReviewService review, CancellationToken ct) =>
+            CheckoutReply(await review.DiscardAsync(name, request.Mode ?? "", request.Fingerprint, ct)));
 
         app.MapPost("/api/review/reset", async (BranchRequest request, ReviewService review, CancellationToken ct) =>
             ReviewReply(await review.ResetAsync(request.Project ?? "", ct)));
@@ -395,7 +415,7 @@ public static class ApiEndpoints
                 auto = e.Profile.Auto,
                 stages = e.Profile.Stages,
                 gates = e.Profile.Gates,
-                verify = e.Profile.Verify.Select(v => (v.Command + " " + string.Join(' ', v.Args)).Trim()).ToArray(),
+                verify = e.Profile.Verify.Select(v => string.IsNullOrWhiteSpace(v.UnityMcp) ? (v.Command + " " + string.Join(' ', v.Args)).Trim() : "Unity compile (open Editor)").ToArray(),
                 mcp = e.Profile.Mcp.Stages,
                 briefingNotes = e.Profile.BriefingNotes,
                 defaults = e.Profile.IsDemo ? null : new Dictionary<string, object>

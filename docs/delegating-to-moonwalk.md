@@ -86,7 +86,7 @@ Content-Type: application/json
   "briefs": ["<brief 1>", "<brief 2>"],
   "stages": { "Spec": { "agent": "claude", "model": "opus", "effort": "high" },
               "Implement": { "agent": "claude", "model": "sonnet", "effort": "medium" } },
-  "auto": { "plan": true, "implementation": true, "mergeToReview": true },
+  "auto": { "plan": true, "implementation": true },
   "stopOnFailure": false,
   "feature": "impact-juice"
 }
@@ -118,9 +118,11 @@ Presets the person already has (they can be applied in the New run dialog): {{pr
 | `plan: true` | approves the gates after a stage (normally the plan) |
 | `implementation: true` | approves the final review, finishes as Done, and releases the workspace so the next run can start |
 | both | also **stops the run as Failed** when a stage fails or a budget is passed, instead of waiting |
-| `mergeToReview: true` | after a run finishes Done, merges its branch into the project's review branch (a conflict leaves it unmerged) |
 
-Recommend **full auto plus `mergeToReview`** for an overnight list the person will test in the morning. Without auto, every run stops and waits
+There is no automatic merge: the person tests a result and merges it into the review branch themselves (**Merge into review branch** on a run,
+or on a feature run **Merge feature into review branch**). Do not merge on their behalf unless they asked.
+
+Recommend **full auto** for an overnight list the person will test in the morning. Without auto, every run stops and waits
 for a human, and the queue waits with it. Full auto never retries and never pushes.
 
 ## Following up
@@ -129,6 +131,10 @@ for a human, and the queue waits with it. Full auto never retries and never push
 - `GET {{base_url}}/api/runs/{id}`: one run. `status` is Queued, Running, WaitingForHuman, Paused, Done, Failed, Cancelled or Interrupted.
   `waiting.reason` says why it waits (Gate, Review, Failed, Blocked, Budget).
 - `GET {{base_url}}/api/runs/{id}/diff`: what the run changed in git. `branch` on the run names the branch to test.
+- To test a result: `POST {{base_url}}/api/projects/<name>/checkout` with `{ "target": "run:<id>" | "feature:<name>" | "review" | "base" }` puts that revision in the
+  person's working folder (a feature run's own step is checked out detached). It is refused while a run uses the repository and returns 409 with the
+  uncommitted files when they are in the way; discarding them (`"discard": "stash" | "delete"` plus the `fingerprint` from the 409 or from
+  `GET /api/projects/<name>/dirty`) is the person's call, never yours.
 - `POST {{base_url}}/api/runs/{id}/merge-review`: merge a Done run into the review branch. `GET {{base_url}}/api/review?project=<name>` shows
   what is in it. A conflict returns HTTP 409 listing the files and changes nothing.
 - Before starting a run on a branch-mode project: `GET {{base_url}}/api/projects/{name}/preflight` lists what the run would hit (uncommitted changes,

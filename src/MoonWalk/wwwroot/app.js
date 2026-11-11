@@ -126,8 +126,9 @@ async function api(path, options) {
   const res = await fetch(path, options);
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
-    try { detail = (await res.json()).error ?? detail; } catch { /* no JSON body */ }
-    throw new Error(detail);
+    let body = null;
+    try { body = await res.json(); detail = body.error ?? detail; } catch { /* no JSON body */ }
+    throw Object.assign(new Error(detail), { body });
   }
   return res.status === 202 || res.status === 204 ? null : res.json();
 }
@@ -137,6 +138,70 @@ const post = (path, body) => api(path, {
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(body ?? {}),
 });
+
+/* ---- checking out a revision, and clearing a dirty working folder so the checkout can go ahead ---- */
+
+const dirtyDialog = document.getElementById('dirtyDialog');
+
+/** Shows what is uncommitted. Resolves to 'stash', 'delete' or null (cancelled). */
+function askDiscard(report, title, intro) {
+  document.getElementById('dirtyTitle').textContent = title;
+  document.getElementById('dirtyIntro').textContent = intro;
+  document.getElementById('dirtyCounts').replaceChildren(
+    h('span', {}, h('b', {}, String(report.total)), ' changed file(s)'),
+    h('span', {}, h('b', {}, String(report.meta)), ' .meta'),
+    h('span', {}, h('b', {}, String(report.untracked)), ' untracked (new, never committed)'),
+    h('span', {}, 'on ', h('b', {}, report.branch)));
+  const rows = report.files.map((f) => h('div', { class: f.meta ? 'meta' : '', title: f.path },
+    h('span', { class: 'k' }, f.kind), f.path + (f.ignored ? '   (ignored by the project profile)' : '')));
+  if (report.total > report.files.length) rows.push(h('div', { class: 'meta' }, `… and ${report.total - report.files.length} more`));
+  document.getElementById('dirtyList').replaceChildren(...rows);
+  document.getElementById('dirtyNote').textContent = 'Save in stash keeps everything recoverable (git stash list). Delete permanently cannot be undone.';
+  return new Promise((resolve) => {
+    const finish = (choice) => { dirtyDialog.oncancel = null; dirtyDialog.close(); resolve(choice); };
+    document.getElementById('dirtyStash').onclick = () => finish('stash');
+    document.getElementById('dirtyDelete').onclick = () => finish('delete');
+    document.getElementById('dirtyCancel').onclick = () => finish(null);
+    dirtyDialog.oncancel = () => resolve(null);
+    dirtyDialog.showModal();
+  });
+}
+
+/**
+ * Checks out a revision of the project: 'review', 'base', 'run:<id>' or 'feature:<name>'. When uncommitted changes are in the way the server
+ * sends the list, and the person chooses whether to stash them or delete them before the checkout goes ahead.
+ */
+async function checkoutTo(project, target, label) {
+  const url = `/api/projects/${encodeURIComponent(project)}/checkout`;
+  let res;
+  try {
+    res = await post(url, { target });
+  } catch (err) {
+    const report = err.body?.dirty;
+    if (!report) throw err;
+    const choice = await askDiscard(report, `Check out ${label}`,
+      `${err.message}\n\nIf none of this is valuable (Unity .meta files and stray files usually are not), clear it and the checkout goes ahead.`);
+    if (!choice) return null;
+    try {
+      res = await post(url, { target, discard: choice, fingerprint: report.fingerprint });
+    } catch (again) {
+      if (again.body?.dirty) { alert(again.message); return checkoutTo(project, target, label); }
+      throw again;
+    }
+  }
+  alert(res.message);
+  return res;
+}
+
+/** Clears the working folder without switching anything (for a dirty tree that blocks a run). */
+async function discardDirty(project) {
+  const report = await api(`/api/projects/${encodeURIComponent(project)}/dirty`);
+  if (!report.total) { alert('The working folder is already clean.'); return; }
+  const choice = await askDiscard(report, 'Clean the working folder', 'These uncommitted changes would block a run. If none of it is valuable, clear it.');
+  if (!choice) return;
+  const res = await post(`/api/projects/${encodeURIComponent(project)}/discard`, { mode: choice, fingerprint: report.fingerprint });
+  alert(res.message);
+}
 
 /** Runs an async action and shows the server's reason when it is refused. */
 async function attempt(action) {
@@ -441,9 +506,14 @@ async function showSettings() {
         h('div', { class: 'decision-row' },
           h('button', { class: 'btn primary small', type: 'button', disabled: !s.exists || s.current, onclick: () => attempt(async () => {
             if (!confirm(`Switch the repository to ${s.branch}?\n\nYour working folder changes to that branch (Unity will reimport what differs).`)) return;
-            alert((await post('/api/review/checkout', { project: branchProject.value })).message);
+            await checkoutTo(branchProject.value, 'review', `'${s.branch}'`);
             await loadReview();
           }) }, 'Check out for testing'),
+          h('button', { class: 'btn small', type: 'button', title: `Switch back to ${s.baseBranch}`, onclick: () => attempt(async () => {
+            await checkoutTo(branchProject.value, 'base', `'${s.baseBranch}'`);
+            await loadReview();
+          }) }, `Back to ${s.baseBranch}`),
+          h('button', { class: 'btn small', type: 'button', title: 'Save or delete uncommitted changes in the working folder', onclick: () => attempt(() => discardDirty(branchProject.value)) }, 'Clean working folder'),
           h('button', { class: 'btn danger small', type: 'button', disabled: !s.exists || s.current, onclick: () => attempt(async () => {
             if (!confirm(`Reset ${s.branch} to ${s.baseBranch}?\n\nEverything merged into it is removed from this branch (the runs' own branches stay). Use this to start a new round of testing.`)) return;
             alert((await post('/api/review/reset', { project: branchProject.value })).message);
@@ -1113,7 +1183,15 @@ async function showRun(id) {
       r.status === 'Done' && r.branch && !r.reviewMergedAt && h('button', {
         class: 'btn primary small', type: 'button', title: 'Merge this branch into the project\'s review branch, without touching your working folder',
         onclick: () => attempt(async () => { const res = await post(`/api/runs/${encodeURIComponent(r.id)}/merge-review`); alert(res.message); }),
-      }, 'Merge into review branch'),
+      }, r.feature ? 'Merge feature into review branch' : 'Merge into review branch'),
+      r.branch && !live && !r.workspaceHeld && r.project !== 'demo' && h('button', {
+        class: 'btn small', type: 'button', title: "Switch the repository to this run's result so you can play it",
+        onclick: () => attempt(() => checkoutTo(r.project, `run:${r.id}`, 'this result')),
+      }, r.feature ? 'Check out this step' : 'Check out this result'),
+      r.feature && !live && !r.workspaceHeld && h('button', {
+        class: 'btn small', type: 'button', title: 'Switch the repository to the feature branch as it is now (all steps so far)',
+        onclick: () => attempt(() => checkoutTo(r.project, `feature:${r.feature}`, `feature "${r.feature}"`)),
+      }, 'Check out feature'),
       renderContinue(r) && h('button', {
         class: 'btn primary small', type: 'button', title: 'Give fix instructions and continue on the same branch',
         onclick: () => { continueOpen = !continueOpen; continueBox.hidden = !continueOpen; if (continueOpen) contNote.focus(); },
@@ -1342,14 +1420,12 @@ function refreshStageRow(refs, defaultAgent, defaults) {
 
 const autoPlan = document.getElementById('autoPlan');
 const autoImpl = document.getElementById('autoImpl');
-const autoMerge = document.getElementById('autoMerge');
-const autoSettings = () => ({ plan: autoPlan.checked, implementation: autoImpl.checked, mergeToReview: autoMerge.checked });
+const autoSettings = () => ({ plan: autoPlan.checked, implementation: autoImpl.checked });
 
 function renderStageAgents(project) {
   // The project's own default for automation, which the checkboxes then let you change for this run.
   autoPlan.checked = !!project?.auto?.plan;
   autoImpl.checked = !!project?.auto?.implementation;
-  autoMerge.checked = !!project?.auto?.mergeToReview;
   updateAutoSummary();
   stageSelects = {};
   const stages = (project?.stages ?? []).filter((s) => STAGE_LABELS[s]);
@@ -1630,7 +1706,8 @@ async function runPreflight(p) {
     if (token !== preflightToken) return;
     const icon = { ok: '✓', info: 'ℹ', warn: '⚠', block: '✕' };
     put(preflightBox,
-      r.notes.map((n) => h('div', { class: `pf pf-${n.level}` }, h('span', { class: 'pf-icon' }, icon[n.level] ?? '•'), n.text)),
+      r.notes.map((n) => h('div', { class: `pf pf-${n.level}` }, h('span', { class: 'pf-icon' }, icon[n.level] ?? '•'), n.text,
+        /uncommitted/i.test(n.text) && h('button', { class: 'btn small', type: 'button', style: 'margin-left:8px', onclick: () => attempt(async () => { await discardDirty(p.name); runPreflight(currentProject()); }) }, 'Review and clean…'))),
       h('button', { class: 'btn small ghost', type: 'button', onclick: () => runPreflight(currentProject()) }, 'Re-check'));
   } catch (err) {
     if (token === preflightToken) put(preflightBox, h('div', { class: 'pf pf-info' }, `Could not check the repository: ${err.message}`));
@@ -1664,9 +1741,9 @@ function updateTypical() {
 }
 
 function updateAutoSummary() {
-  const on = [autoPlan.checked && 'plan', autoImpl.checked && 'implementation', autoMerge.checked && 'merge to review'].filter(Boolean);
+  const on = [autoPlan.checked && 'plan', autoImpl.checked && 'implementation'].filter(Boolean);
   const d = currentProject()?.auto;
-  const same = !!d && !!d.plan === autoPlan.checked && !!d.implementation === autoImpl.checked && !!d.mergeToReview === autoMerge.checked;
+  const same = !!d && !!d.plan === autoPlan.checked && !!d.implementation === autoImpl.checked;
   autoSummary.textContent = `Auto: ${on.length ? on.join(' + ') : 'off'}${same ? ' (project default)' : ''}`;
 }
 
@@ -1685,7 +1762,7 @@ function updateTitlePreview() {
 }
 
 briefInput.addEventListener('input', updateTitlePreview);
-for (const box of [autoPlan, autoImpl, autoMerge]) box.addEventListener('change', updateAutoSummary);
+for (const box of [autoPlan, autoImpl]) box.addEventListener('change', updateAutoSummary);
 dialog.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.getElementById('newRunForm').requestSubmit(); }
 });

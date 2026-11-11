@@ -302,6 +302,14 @@ a.btn { display: inline-flex; align-items: center; }
 .usage-chip { font-size: 12px; color: var(--muted); padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
 .usage-chip b { color: var(--text); font-weight: 550; }
 
+/* the uncommitted-changes dialog */
+.dirty-counts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+.dirty-list { max-height: 260px; overflow: auto; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg); padding: 6px 10px; font: 12px/1.6 ui-monospace, Consolas, monospace; }
+.dirty-list div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dirty-list .k { display: inline-block; width: 76px; color: var(--muted, #8b93a1); }
+.dirty-list .meta { opacity: 0.6; }
+#dirtyIntro { white-space: pre-line; }
+
 /* presets in the New run dialog */
 .preset-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 .preset-row select { flex: 1; min-width: 0; }

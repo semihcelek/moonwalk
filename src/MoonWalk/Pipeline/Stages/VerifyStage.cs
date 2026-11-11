@@ -24,6 +24,45 @@ public sealed class VerifyStage : IStage
 
         foreach (var step in steps)
         {
+            if (!string.IsNullOrWhiteSpace(step.UnityMcp))
+            {
+                var unityLabel = string.IsNullOrWhiteSpace(step.Name) ? "unity compile" : step.Name;
+                context.Emit(EventTypes.System, $"Verify step '{unityLabel}': Unity compile check through {step.UnityMcp}");
+                log.AppendLine($"$ unity compile check ({step.UnityMcp})");
+                try
+                {
+                    var check = await UnityCompileCheck.RunAsync(step.UnityMcp, TimeSpan.FromMinutes(step.TimeoutMinutes), line => context.Emit(EventTypes.System, "  " + line), ct);
+                    log.AppendLine(check.Summary);
+                    if (!check.Passed)
+                    {
+                        failure = check.Summary;
+                    }
+                    else
+                    {
+                        context.Emit(EventTypes.System, $"Verify step '{unityLabel}' passed: {check.Summary}");
+                    }
+                }
+                catch (UnityUnavailableException ex) when (step.Optional)
+                {
+                    log.AppendLine("skipped: " + ex.Message);
+                    context.Emit(EventTypes.Warning, $"Verify step '{unityLabel}' skipped, so this result was NOT compiled: {ex.Message}");
+                }
+                catch (UnityUnavailableException ex)
+                {
+                    failure = $"Verify step '{unityLabel}' could not run: {ex.Message}";
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    failure = $"Verify step '{unityLabel}' timed out after {step.TimeoutMinutes} minutes (is the Editor stuck on a dialog or still importing?).";
+                }
+                if (failure is not null)
+                {
+                    log.AppendLine(failure);
+                    break;
+                }
+                continue;
+            }
+
             var label = string.IsNullOrWhiteSpace(step.Name) ? step.Command : step.Name;
             context.Emit(EventTypes.System, $"Verify step '{label}': {step.Command} {string.Join(' ', step.Args)}".TrimEnd());
             log.AppendLine($"$ {step.Command} {string.Join(' ', step.Args)}".TrimEnd());

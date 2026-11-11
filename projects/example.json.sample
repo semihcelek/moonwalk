@@ -43,6 +43,8 @@
   "gates": ["Spec"],
 
   // Commands for the Verify stage (no shell: command plus arguments). They run in repoPath and stop at the first failure.
+  // Unity: instead of a command, { "name": "unity compile", "unityMcp": "http://127.0.0.1:8080/mcp" } asks the open Editor (unity-mcp) to compile and
+  // fails on any `error CS` in the Console. Costs no agent quota; needs the Editor open on this folder. Add "optional": true to skip it when the Editor is closed.
   "verify": [
     { "name": "compile", "command": "dotnet", "args": ["build", "-nologo"], "timeoutMinutes": 10 }
   ],

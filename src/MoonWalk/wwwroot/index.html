@@ -87,7 +87,6 @@
           <legend>Automation</legend>
           <label class="check"><input type="checkbox" id="autoPlan"> Auto-accept the plan</label>
           <label class="check"><input type="checkbox" id="autoImpl"> Auto-accept the implementation (and release the workspace afterwards)</label>
-          <label class="check"><input type="checkbox" id="autoMerge"> Merge each finished run into the review branch</label>
           <small class="hint">With both on the run is fully automatic: a failed or blocked stage, or a passed budget, stops the run instead of waiting for you.</small>
         </fieldset>
       </div>
@@ -100,6 +99,24 @@
         <button class="btn primary" type="submit" id="newRunSubmit" title="Ctrl+Enter">Start run</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="dirtyDialog">
+    <div class="modal">
+      <div class="modal-head"><h2 id="dirtyTitle">Uncommitted changes</h2></div>
+      <div class="modal-body">
+        <p id="dirtyIntro" class="hint"></p>
+        <div id="dirtyCounts" class="dirty-counts"></div>
+        <div id="dirtyList" class="dirty-list"></div>
+        <p class="hint">Files that git ignores (Unity's Library, Temp, Logs) are not listed and are never touched.</p>
+      </div>
+      <div class="modal-actions">
+        <div class="modal-summary"><span id="dirtyNote"></span></div>
+        <button class="btn" type="button" id="dirtyCancel">Cancel</button>
+        <button class="btn danger" type="button" id="dirtyDelete" title="Cannot be undone">Delete permanently</button>
+        <button class="btn primary" type="button" id="dirtyStash" title="Everything goes into a git stash you can get back">Save in stash and clean</button>
+      </div>
+    </div>
   </dialog>
 
   <script type="module" src="app.js"></script>

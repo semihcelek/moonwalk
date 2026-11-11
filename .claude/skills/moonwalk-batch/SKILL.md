@@ -27,7 +27,7 @@ If MoonWalk is not answering, say so and stop. Do not start it unless asked.
 
 - Spec is read-only. **Do not use `muse-ember-1.0` for Spec**: on 2026-11-11 every read-only Ember call got HTTP 404 ("does not exist or you lack access"). Use `muse-spark-1.3` for Spec; `muse-wonder-1.0` for big or hard-to-undo work.
 - Implement: `muse-spark-1.3` for one feature, `muse-wonder-1.0` for large ones, `muse-ember-1.0` only for small bounded edits. **Ember was unreliable the same day**: it worked for 4 Implement runs, then 2 more failed with the same 404 about 30 s in with no tool calls. If a run fails with "does not exist or you lack access", retry it on `muse-spark-1.3` rather than assuming the brief is bad. Check `src/MoonWalk/Agents/ModelCatalog.cs` for the current ids.
-- Overnight/unattended: `auto: {plan: true, implementation: true}`; add `mergeToReview: true` only if the user wants results merged into the review branch. `stopOnFailure: false` so one failure does not stop the rest.
+- Overnight/unattended: `auto: {plan: true, implementation: true}`; never auto-merge (there is no such option; the user merges into the review branch by hand after testing). `stopOnFailure: false` so one failure does not stop the rest.
 - Tiny test batches: use the cheapest model and docs-only briefs.
 
 ## 4. Show the plan, then submit
@@ -37,7 +37,7 @@ Show the user the brief list (one line each), the stages/models and auto setting
 ```powershell
 $body = @{ name = "..."; project = "..."; kind = "queue"; briefs = @("...","...")
   stages = @{ Spec = @{agent="muse";model="muse-spark-1.3";effort="high"}; Implement = @{agent="muse";model="muse-ember-1.0";effort="medium"} }
-  auto = @{ plan=$true; implementation=$true; mergeToReview=$true }; stopOnFailure = $false
+  auto = @{ plan=$true; implementation=$true }; stopOnFailure = $false
   # feature = "hand-throw"; ownBranch = @(4)   # briefs that build on each other share one feature branch; #4 is independent
 } | ConvertTo-Json -Depth 6
 Invoke-RestMethod -Method Post -Uri http://localhost:5870/api/batches -ContentType 'application/json; charset=utf-8' `

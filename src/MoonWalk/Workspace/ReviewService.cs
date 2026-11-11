@@ -19,7 +19,7 @@ public sealed record ReviewResult(bool Ok, string Message, IReadOnlyList<string>
 /// branch checked out right now: then a real merge is used (only on a clean tree), because moving a checked-out branch underneath the
 /// working folder would leave it out of sync. A conflict changes nothing and lists the files.
 /// </summary>
-public sealed partial class ReviewService(ProjectRegistry projects, RunStore store, EventHub hub)
+public sealed partial class ReviewService(ProjectRegistry projects, RunStore store, EventHub hub, FeatureStore features)
 {
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.OrdinalIgnoreCase);
 
@@ -126,30 +126,6 @@ public sealed partial class ReviewService(ProjectRegistry projects, RunStore sto
         {
             gate.Release();
         }
-    }
-
-    /// <summary>Switches the repository to the review branch, so everything merged into it can be tested from one checkout.</summary>
-    public async Task<ReviewResult> CheckoutAsync(string projectName, CancellationToken ct)
-    {
-        if (Real(projectName) is not { } entry)
-        {
-            return Fail("Choose a project that has a repository.");
-        }
-        if (BusyRuns(entry.Profile.Name) is { Count: > 0 } busy)
-        {
-            return Fail($"A run is still using this repository ({string.Join(", ", busy.Take(3))}). Finish or release it first.");
-        }
-        var repo = entry.Profile.RepoPath;
-        var review = entry.Profile.ReviewBranch;
-        if (!(await Git.RunAsync(repo, ct, "rev-parse", "--verify", "-q", $"refs/heads/{review}")).Ok)
-        {
-            return Fail($"'{review}' does not exist yet. Merge a finished run into it first.");
-        }
-
-        var checkout = await Git.RunAsync(repo, ct, "checkout", review);
-        return checkout.Ok
-            ? new ReviewResult(true, $"The repository is on '{review}'.", [])
-            : Fail($"git could not switch branches: {checkout.Err.Trim()}");
     }
 
     /// <summary>Points the review branch back at the base branch, to start a new round. The merged runs lose their "in review" mark; their own branches stay.</summary>
