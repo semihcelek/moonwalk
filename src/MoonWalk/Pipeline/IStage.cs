@@ -116,6 +116,15 @@ public sealed class StageContext
         AddArtifact(name);
     }
 
+    /// <summary>Writes a binary file (a screenshot) under the run folder and lists it as an artifact the UI can show.</summary>
+    public void WriteArtifactBytes(string name, byte[] bytes)
+    {
+        var path = Path.Combine(RunDir, name.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, bytes);
+        AddArtifact(name);
+    }
+
     /// <summary>Prompt sections for guidance notes and the reason the previous attempt failed.</summary>
     public string PromptContext()
     {

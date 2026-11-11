@@ -294,6 +294,59 @@ public sealed class RunEngine
         return (true, "Decision recorded.");
     }
 
+    /// <summary>Hides a finished run from the board (or shows it again). Nothing on disk changes.</summary>
+    public (bool Ok, string Message) Archive(string id, bool archived)
+    {
+        var run = _store.Get(id);
+        if (run is null)
+        {
+            return (false, "Run not found.");
+        }
+        if (_controls.ContainsKey(id) || Run.IsActive(run.Status))
+        {
+            return (false, "The run is still active.");
+        }
+        _store.Update(id, r => r.Archived = archived);
+        return (true, archived ? "Archived." : "Restored.");
+    }
+
+    /// <summary>
+    /// Permanently removes a finished run and its folder (events, artifacts). Refused while the run is active or still holds its
+    /// workspace. The run's git branch is not touched.
+    /// </summary>
+    public (bool Ok, string Message) Delete(string id)
+    {
+        var run = _store.Get(id);
+        if (run is null)
+        {
+            return (false, "Run not found.");
+        }
+        if (_controls.ContainsKey(id) || Run.IsActive(run.Status))
+        {
+            return (false, "The run is still active. Cancel or stop it first.");
+        }
+        if (run.WorkspaceHeld)
+        {
+            return (false, "The run still holds its workspace. Release it first.");
+        }
+
+        _store.Remove(id);
+        _hub.Close(id);
+        try
+        {
+            var dir = Path.Combine(_runsRoot, id);
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (true, $"Removed from the list, but its folder could not be deleted: {ex.Message}");
+        }
+        return (true, "Deleted.");
+    }
+
     /// <summary>Gives the workspace back: branch mode returns the repository to the branch it was on; worktree mode removes the worktree folder.</summary>
     public async Task<(bool Ok, string Message)> ReleaseAsync(string id)
     {

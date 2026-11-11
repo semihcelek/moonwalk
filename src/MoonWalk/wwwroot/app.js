@@ -136,11 +136,87 @@ function startGlobalStream() {
   es.onerror = () => setConn('down', 'reconnecting');
   es.addEventListener('run', (e) => {
     const run = JSON.parse(e.data);
+    if (run.removed) {
+      runs.delete(run.id);
+      updateTitle();
+      onRunsChanged?.(run);
+      return;
+    }
+    const before = runs.get(run.id);
     runs.set(run.id, run);
     updateTitle();
+    notifyChange(before, run);
     onRunsChanged?.(run);
   });
 }
+
+/* ------------------------------------------------------- browser notifications */
+
+const NOTIFY_KEY = 'mw.notify';
+const bell = document.getElementById('bell');
+
+function notifySupported() { return typeof window.Notification === 'function'; }
+
+function notifyOn() {
+  try { return notifySupported() && localStorage.getItem(NOTIFY_KEY) === '1' && Notification.permission === 'granted'; } catch { return false; }
+}
+
+function renderBell() {
+  const state = !notifySupported() ? 'unsupported' : Notification.permission === 'denied' ? 'blocked' : notifyOn() ? 'on' : 'off';
+  bell.dataset.state = state;
+  bell.title = {
+    on: 'Notifications are on: you are told when a run needs you or finishes while this tab is in the background. Click to turn off.',
+    off: 'Click to get a notification when a run needs you or finishes.',
+    blocked: 'Notifications are blocked for this site in the browser settings.',
+    unsupported: 'This browser has no notifications.',
+  }[state];
+  bell.setAttribute('aria-pressed', String(state === 'on'));
+}
+
+bell.addEventListener('click', async () => {
+  if (!notifySupported()) { alert('This browser does not support notifications.'); return; }
+  if (Notification.permission === 'denied') { alert('Notifications are blocked for this site. Allow them in the browser settings, then click the bell again.'); return; }
+  try {
+    if (notifyOn()) {
+      localStorage.setItem(NOTIFY_KEY, '0');
+    } else {
+      const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+      if (permission === 'granted') {
+        localStorage.setItem(NOTIFY_KEY, '1');
+        new Notification('MoonWalk notifications are on', { body: 'You will be told when a run needs you or finishes.', silent: true });
+      }
+    }
+  } catch { /* storage or permission unavailable */ }
+  renderBell();
+});
+
+/** Notifies about the moments that matter, when you are not looking at the page: a run needs you, finished, failed or was interrupted. */
+function notifyChange(before, run) {
+  if (!before || before.status === run.status || !notifyOn()) return;
+  if (document.hasFocus() && !document.hidden) return; // you are looking at it
+
+  let title;
+  let body;
+  if (run.status === 'WaitingForHuman') {
+    title = run.waiting?.reason === 'Budget' ? 'Budget reached' : run.waiting?.reason === 'Review' ? 'Ready for you to play' : 'Needs you';
+    body = `${run.title}\n${run.waiting?.message ?? ''}`;
+  } else if (run.status === 'Done') {
+    title = 'Run finished';
+    body = run.title;
+  } else if (['Failed', 'Interrupted'].includes(run.status)) {
+    title = run.status === 'Failed' ? 'Run failed' : 'Run interrupted';
+    body = `${run.title}\n${run.error ?? ''}`;
+  } else {
+    return;
+  }
+
+  try {
+    const note = new Notification(title, { body: body.slice(0, 240), tag: run.id });
+    note.onclick = () => { window.focus(); location.hash = `#/run/${encodeURIComponent(run.id)}`; note.close(); };
+  } catch { /* the browser refused; nothing to do */ }
+}
+
+renderBell();
 
 /** "(2) MoonWalk" in the browser tab while runs are waiting for you. */
 function updateTitle() {
@@ -225,20 +301,55 @@ async function showBoard() {
   const list = h('div', { class: 'runs' });
   const sub = h('span', { class: 'sub' });
   const strip = h('div', { class: 'usage-strip' });
-  view.replaceChildren(h('div', { class: 'page-head' }, h('h1', {}, 'Runs'), sub), strip, list);
+
+  /* filters: kept in boardFilter so they survive live updates and navigating away and back */
+  const search = h('input', { type: 'search', class: 'filter-q', placeholder: 'Search title, id, project or brief', value: boardFilter.q, 'aria-label': 'Search runs' });
+  const statusSel = h('select', { 'aria-label': 'Status' },
+    [['', 'Any status'], ['active', 'Active'], ['WaitingForHuman', 'Needs you'], ['Done', 'Done'], ['Failed', 'Failed or interrupted'], ['Cancelled', 'Cancelled']]
+      .map(([v, l]) => h('option', { value: v, selected: v === boardFilter.status }, l)));
+  const projectSel = h('select', { 'aria-label': 'Project' });
+  const archivedBox = h('input', { type: 'checkbox', checked: boardFilter.archived });
+  let projectKey = '';
+  const bar = h('div', { class: 'filter-bar' }, search, statusSel, projectSel, h('label', { class: 'inline' }, archivedBox, 'Show archived'));
+  view.replaceChildren(h('div', { class: 'page-head' }, h('h1', {}, 'Runs'), sub), strip, bar, list);
+
+  const matches = (r) => {
+    if (!boardFilter.archived && r.archived) return false;
+    if (boardFilter.project && r.project !== boardFilter.project) return false;
+    const s = boardFilter.status;
+    if (s === 'active' && !isActive(r.status)) return false;
+    if (s === 'Failed' && !['Failed', 'Interrupted'].includes(r.status)) return false;
+    if (s && s !== 'active' && s !== 'Failed' && r.status !== s) return false;
+    const q = boardFilter.q.trim().toLowerCase();
+    return !q || `${r.title} ${r.id} ${r.project} ${r.brief}`.toLowerCase().includes(q);
+  };
 
   const render = () => {
     const all = [...runs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const names = [...new Set(all.map((r) => r.project))].sort();
+    if (names.join('|') !== projectKey) {
+      projectKey = names.join('|');
+      put(projectSel, h('option', { value: '' }, 'Any project'),
+        names.map((n) => h('option', { value: n, selected: n === boardFilter.project }, n)));
+    }
+    const shown = all.filter(matches);
     const active = all.filter((r) => isActive(r.status)).length;
-    sub.textContent = all.length ? `${active} active · ${all.length} total` : '';
+    sub.textContent = all.length ? `${active} active · ${shown.length} of ${all.length} shown` : '';
     if (!all.length) {
       list.replaceChildren(h('div', { class: 'empty' },
         h('strong', {}, 'No runs yet'),
         'Start one with "New run" and watch the agents work live.'));
-      return;
+    } else if (!shown.length) {
+      list.replaceChildren(h('div', { class: 'empty' }, h('strong', {}, 'No runs match'), 'Change the search or the filters above.'));
+    } else {
+      list.replaceChildren(...shown.map(runRow));
     }
-    list.replaceChildren(...all.map(runRow));
   };
+
+  search.addEventListener('input', () => { boardFilter.q = search.value; render(); });
+  statusSel.addEventListener('change', () => { boardFilter.status = statusSel.value; render(); });
+  projectSel.addEventListener('change', () => { boardFilter.project = projectSel.value; render(); });
+  archivedBox.addEventListener('change', () => { boardFilter.archived = archivedBox.checked; render(); });
 
   try {
     for (const r of await api('/api/runs')) runs.set(r.id, r);
@@ -251,6 +362,8 @@ async function showBoard() {
   loadUsage(strip, true);
   onRunsChanged = () => { render(); loadUsage(strip); };
 }
+
+const boardFilter = { q: '', status: '', project: '', archived: false };
 
 let usageStamp = 0;
 
@@ -272,9 +385,12 @@ async function loadUsage(strip, force = false) {
 
 function runRow(run) {
   const stage = run.currentStage ?? (run.status === 'Done' ? 'finished' : '');
-  return h('a', { class: `run-row${run.status === 'WaitingForHuman' ? ' attn' : ''}`, href: `#/run/${encodeURIComponent(run.id)}` },
+  const t = totals(run);
+  const spend = [t.tokens ? `${fmtTokens(t.tokens)} tokens` : null, t.hasCost ? fmtUsd(t.cost) : null].filter(Boolean).join(' · ');
+  return h('a', { class: `run-row${run.status === 'WaitingForHuman' ? ' attn' : ''}${run.archived ? ' archived' : ''}`, href: `#/run/${encodeURIComponent(run.id)}` },
     h('div', {}, pill(run.status)),
-    h('div', {}, h('div', { class: 'title' }, run.title), h('div', { class: 'meta' }, `${run.project} · ${run.id}`)),
+    h('div', {}, h('div', { class: 'title' }, run.title),
+      h('div', { class: 'meta' }, `${run.project} · ${run.id}${spend ? ' · ' + spend : ''}${run.archived ? ' · archived' : ''}`)),
     h('div', { class: 'meta hide-sm' }, stage),
     h('div', { class: 'num hide-sm' }, duration(run.createdAt, isActive(run.status) ? null : run.finishedAt ?? run.updatedAt)),
     h('div', { class: 'num hide-sm', 'data-ago': run.updatedAt }, ago(run.updatedAt)));
@@ -364,30 +480,68 @@ async function showRun(id) {
     artifactView.hidden = isFeed;
     if (!isFeed) jump.hidden = true;
     for (const t of tabs.children) t.setAttribute('aria-selected', String(t.dataset.tab === name));
-    if (!isFeed) loadArtifact(name, r?.updatedAt);
+    if (!isFeed) (name === 'changes' ? loadChanges : loadArtifact)(name, r?.updatedAt);
   };
 
   const loadArtifact = async (name, stamp) => {
     const key = `${name}@${stamp}`;
     if (artifactFor === key) return;
     artifactFor = key;
+    const url = `/api/runs/${encodeURIComponent(id)}/files/${name.split('/').map(encodeURIComponent).join('/')}`;
+    artifactView.classList.remove('diff');
+    if (/\.(png|jpe?g|gif|webp)$/i.test(name)) {
+      artifactView.replaceChildren(h('img', { class: 'shot', src: url, alt: name }), h('div', { class: 'muted shot-name' }, name));
+      return;
+    }
     try {
-      const res = await fetch(`/api/runs/${encodeURIComponent(id)}/files/${name.split('/').map(encodeURIComponent).join('/')}`);
+      const res = await fetch(url);
       artifactView.textContent = res.ok ? await res.text() : `Could not load ${name} (${res.status}).`;
     } catch (err) {
       artifactView.textContent = `Could not load ${name}: ${err.message}`;
     }
   };
 
+  /** What the run changed in git, against its base branch: a file list and the colored patch. */
+  const loadChanges = async (name, stamp) => {
+    const key = `changes@${stamp}`;
+    if (artifactFor === key) return;
+    artifactFor = key;
+    artifactView.classList.add('diff');
+    try {
+      const d = await api(`/api/runs/${encodeURIComponent(id)}/diff`);
+      if (!d.available) { artifactView.textContent = d.reason ?? 'No changes to show.'; return; }
+      const added = d.files.reduce((a, f) => a + f.added, 0);
+      const removed = d.files.reduce((a, f) => a + f.removed, 0);
+      const line = (text) => {
+        const cls = text.startsWith('diff ') ? 'file'
+          : /^(\+\+\+|---|index |new file|deleted file|similarity|rename|old mode|new mode|Binary files)/.test(text) ? 'meta'
+          : text.startsWith('@@') ? 'hunk' : text.startsWith('+') ? 'add' : text.startsWith('-') ? 'del' : '';
+        return h('div', { class: `dl ${cls}` }, text || ' ');
+      };
+      put(artifactView,
+        h('div', { class: 'diff-head' },
+          h('b', {}, `${d.files.length} file${d.files.length === 1 ? '' : 's'}`),
+          h('span', { class: 'add' }, ` +${added}`), h('span', { class: 'del' }, ` -${removed}`),
+          h('span', { class: 'muted' }, `  ${d.base}..${d.branch}`)),
+        h('div', { class: 'diff-files' }, d.files.map((f) => h('div', { class: 'df' },
+          h('span', { class: 'df-path' }, f.path),
+          f.binary ? h('span', { class: 'muted' }, 'binary') : [h('span', { class: 'add' }, `+${f.added}`), h('span', { class: 'del' }, `-${f.removed}`)]))),
+        d.patch ? h('div', { class: 'patch' }, d.patch.split('\n').map(line)) : h('div', { class: 'muted' }, 'No differences.'),
+        d.truncated && h('div', { class: 'muted' }, '… the patch is cut off here; see the branch in git for the rest.'));
+    } catch (err) {
+      artifactView.textContent = `Could not load the changes: ${err.message}`;
+    }
+  };
+
   const renderTabs = (r) => {
-    const names = ['feed', ...(r.artifacts ?? [])];
+    const names = ['feed', ...(r.branch ? ['changes'] : []), ...(r.artifacts ?? [])];
     const key = names.join('|');
     if (key !== tabKey) {
       tabKey = key;
       tabs.replaceChildren(...names.map((n) => h('button', {
         class: 'tab', type: 'button', role: 'tab', 'data-tab': n,
         onclick: () => showTab(n, runs.get(id)),
-      }, n === 'feed' ? 'Live feed' : n.replace(/^evidence\//, ''))));
+      }, n === 'feed' ? 'Live feed' : n === 'changes' ? 'Changes' : n.replace(/^(evidence|screenshots)\//, ''))));
       if (!names.includes(activeTab)) activeTab = 'feed';
     }
     showTab(activeTab, r);
@@ -434,7 +588,9 @@ async function showRun(id) {
       (r.status === 'Paused' || (r.pauseRequested && r.status === 'Running')) &&
         h('button', { class: 'btn primary small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/resume`)) }, r.status === 'Paused' ? 'Resume' : 'Cancel pause'),
       r.status === 'Interrupted' && h('button', { class: 'btn primary small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/recover`)) }, 'Recover run'),
-      live && h('button', { class: 'btn danger small', type: 'button', onclick: () => cancelRun(r.id) }, 'Cancel run'));
+      live && h('button', { class: 'btn danger small', type: 'button', onclick: () => cancelRun(r.id) }, 'Cancel run'),
+      !live && h('button', { class: 'btn small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/${r.archived ? 'unarchive' : 'archive'}`)) }, r.archived ? 'Unarchive' : 'Archive'),
+      !live && !r.workspaceHeld && h('button', { class: 'btn danger small', type: 'button', onclick: () => deleteRun(r) }, 'Delete'));
     guidanceBox.hidden = !live;
     noteList.replaceChildren(...(r.guidance ?? []).map((g) =>
       h('div', { class: 'note' }, h('span', { class: 'note-t' }, `${fmtClock(g.time)}${g.stage ? ' · ' + g.stage : ''}`), g.text)));
@@ -493,11 +649,30 @@ async function showRun(id) {
 
   const closeDelta = () => { openDelta?.body.classList.remove('live-caret'); openDelta = null; };
 
+  /* Every stage attempt gets its own collapsible group, so a retry does not bury the first attempt. */
+  let group = null;
+  const groups = [];
+
+  const startGroup = (ev) => {
+    const attemptNo = Number(/attempt (\d+)/.exec(ev.text ?? '')?.[1] ?? 1);
+    for (const g of groups) if (g.stage === ev.stage) g.el.open = false; // fold earlier attempts of this stage
+    const result = h('span', { class: 'attempt-result' }, 'running');
+    const body = h('div', { class: 'attempt-body' });
+    const el = h('details', { class: 'attempt', open: true },
+      h('summary', {}, h('b', {}, ev.stage),
+        attemptNo > 1 && h('span', { class: 'attempt-n' }, `attempt ${attemptNo}`),
+        h('span', { class: 't' }, fmtClock(ev.time)), result),
+      body);
+    feed.append(el);
+    group = { el, body, stage: ev.stage, result };
+    groups.push(group);
+  };
+
   const addRow = (kind, ev, bodyNodes, extraClass = '') => {
     const body = h('div', { class: 'body' }, bodyNodes);
     const row = h('div', { class: `row k-${kind} ty-${ev.type} ${extraClass}` },
       h('span', { class: 't' }, fmtClock(ev.time)), h('span', { class: 'stg' }, ev.stage ?? ''), body);
-    feed.append(row);
+    (group?.body ?? feed).append(row);
     return { row, body };
   };
 
@@ -534,8 +709,18 @@ async function showRun(id) {
         addRow('tool', ev, nodes);
         break;
       }
+      case 'StageStarted':
+        closeDelta();
+        startGroup(ev); // the group header replaces the "Stage X started" row
+        break;
       default: {
         closeDelta();
+        if (ev.type === 'RunFinished') group = null; // the closing lines belong to the run, not to a stage
+        if (ev.type === 'StageFinished' && group && group.stage === ev.stage) {
+          const outcome = ev.data?.outcome ?? '';
+          group.result.textContent = outcome;
+          group.result.className = `attempt-result o-${outcome.toLowerCase()}`;
+        }
         const bad = ev.type === 'RunFinished' && ['Failed', 'Cancelled', 'Interrupted'].includes(ev.data?.status);
         addRow('system', ev, ev.text ?? ev.type, bad ? 'bad' : '');
       }
@@ -546,9 +731,19 @@ async function showRun(id) {
   const es = new EventSource(`/api/runs/${encodeURIComponent(id)}/stream`);
   es.addEventListener('ev', (e) => appendEvent(JSON.parse(e.data)));
 
-  onRunsChanged = (changed) => { if (changed.id === id) renderRun(changed); };
+  onRunsChanged = (changed) => {
+    if (changed.id !== id) return;
+    if (changed.removed) { location.hash = '#/'; return; }
+    renderRun(changed);
+  };
   currentRunView = { close: () => es.close() };
 }
+
+const deleteRun = (r) => attempt(async () => {
+  if (!confirm(`Permanently delete this run and its files?\n\n${r.title}\n\nThe git branch ${r.branch ?? ''} is not touched.`)) return;
+  await api(`/api/runs/${encodeURIComponent(r.id)}`, { method: 'DELETE' });
+  location.hash = '#/';
+});
 
 const cancelRun = (id) => attempt(() => post(`/api/runs/${encodeURIComponent(id)}/cancel`));
 

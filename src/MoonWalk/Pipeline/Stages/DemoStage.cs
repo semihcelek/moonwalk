@@ -17,7 +17,7 @@ public enum DemoBehavior
 /// Scripted stand-in for a real agent stage. It streams text deltas, tool calls and warnings so the live UI and the control
 /// surface (gates, retry, pause, guidance) can be exercised end to end without any agent installed.
 /// </summary>
-public sealed class DemoStage(string name, string intro, DemoBehavior behavior = DemoBehavior.Pass, string? artifact = null) : IStage
+public sealed class DemoStage(string name, string intro, DemoBehavior behavior = DemoBehavior.Pass, string? artifact = null, bool screenshot = false) : IStage
 {
     public string Name { get; } = name;
 
@@ -44,6 +44,11 @@ public sealed class DemoStage(string name, string intro, DemoBehavior behavior =
         if (artifact is not null)
         {
             context.WriteArtifact(artifact, $"# Demo {Name}\n\nBrief: {context.Brief}\n\nAttempt {context.Attempt}.\n");
+        }
+
+        if (screenshot)
+        {
+            context.WriteArtifactBytes($"screenshots/{Name.ToLowerInvariant()}-attempt{context.Attempt}.png", DemoPng.Moon());
         }
 
         switch (behavior)

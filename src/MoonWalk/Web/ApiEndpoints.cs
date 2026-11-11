@@ -3,6 +3,7 @@ using System.Threading.Channels;
 using MoonWalk.Agents;
 using MoonWalk.Core;
 using MoonWalk.Projects;
+using MoonWalk.Workspace;
 
 namespace MoonWalk.Web;
 
@@ -96,8 +97,72 @@ public static class ApiEndpoints
             {
                 return Results.NotFound();
             }
-            return Results.Text(File.ReadAllText(path), "text/plain; charset=utf-8");
+            var image = Path.GetExtension(path).ToLowerInvariant() switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                _ => null,
+            };
+            return image is not null
+                ? Results.File(File.ReadAllBytes(path), image)
+                : Results.Text(File.ReadAllText(path), "text/plain; charset=utf-8");
         });
+
+        app.MapGet("/api/runs/{id}/diff", async (string id, RunStore store, ProjectRegistry projects, AppPaths paths, CancellationToken ct) =>
+        {
+            var run = store.Get(id);
+            if (run is null)
+            {
+                return Results.NotFound();
+            }
+            var entry = projects.Get(run.Project);
+            var state = WorkspaceState.Load(Path.Combine(paths.RunsRoot, id));
+            if (entry is null || entry.Profile.IsDemo || state is null || string.IsNullOrEmpty(state.Branch))
+            {
+                return Results.Json(new { available = false, reason = "This run has no git branch." }, Json.Options);
+            }
+
+            var repo = entry.Profile.RepoPath;
+            var range = $"{state.BaseBranch}..{state.Branch}";
+            var numstat = await Git.RunAsync(repo, ct, "diff", "--numstat", "--no-renames", range);
+            if (!numstat.Ok)
+            {
+                return Results.Json(new { available = false, reason = $"git could not compare {range}: {numstat.Err.Trim()}" }, Json.Options);
+            }
+
+            var files = numstat.Out.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(row =>
+            {
+                var cols = row.Split('\t');
+                return new
+                {
+                    path = cols.Length > 2 ? cols[2] : row,
+                    added = cols.Length > 0 && int.TryParse(cols[0], out var a) ? a : 0,
+                    removed = cols.Length > 1 && int.TryParse(cols[1], out var r) ? r : 0,
+                    binary = cols.Length > 0 && cols[0] == "-",
+                };
+            }).ToList();
+
+            const int maxPatch = 300_000;
+            var patch = (await Git.RunAsync(repo, ct, "diff", "--no-renames", "-U3", range)).Out;
+            var truncated = patch.Length > maxPatch;
+            return Results.Json(new
+            {
+                available = true,
+                @base = state.BaseBranch,
+                branch = state.Branch,
+                files,
+                patch = truncated ? patch[..maxPatch] : patch,
+                truncated,
+            }, Json.Options);
+        });
+
+        app.MapPost("/api/runs/{id}/archive", (string id, RunEngine engine) => Reply(engine.Archive(id, true)));
+
+        app.MapPost("/api/runs/{id}/unarchive", (string id, RunEngine engine) => Reply(engine.Archive(id, false)));
+
+        app.MapDelete("/api/runs/{id}", (string id, RunEngine engine) => Reply(engine.Delete(id)));
 
         app.MapPost("/api/runs/{id}/release", async (string id, RunEngine engine) =>
         {

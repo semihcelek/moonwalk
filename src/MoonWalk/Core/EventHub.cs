@@ -18,11 +18,28 @@ public sealed class EventHub(string runsRoot)
     public (IReadOnlyList<RunEvent> Backlog, Fanout<RunEvent>.Subscription Subscription) OpenStream(string runId, long afterSeq) =>
         Log(runId).OpenStream(afterSeq);
 
+    /// <summary>Releases the open log file of a run, so its folder can be deleted.</summary>
+    public void Close(string runId)
+    {
+        if (_logs.TryRemove(runId, out var log))
+        {
+            log.Dispose();
+        }
+    }
+
     private RunLog Log(string runId) =>
         _logs.GetOrAdd(runId, id => new RunLog(id, Path.Combine(runsRoot, id)));
 
-    private sealed class RunLog
+    private sealed class RunLog : IDisposable
     {
+        public void Dispose()
+        {
+            lock (_lock)
+            {
+                _writer.Dispose();
+            }
+        }
+
         private readonly object _lock = new();
         private readonly string _runId;
         private readonly string _path;

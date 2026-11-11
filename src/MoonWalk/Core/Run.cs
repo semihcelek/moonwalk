@@ -98,6 +98,9 @@ public sealed class Run
     public WaitState? Waiting { get; set; }
     public bool PauseRequested { get; set; }
 
+    /// <summary>Hidden from the board unless "show archived" is on. Only finished runs can be archived.</summary>
+    public bool Archived { get; set; }
+
     /// <summary>One entry per agent attempt of a stage; <see cref="CostUsd"/> is their sum.</summary>
     public List<UsageEntry> Usage { get; set; } = new();
     public List<GuidanceNote> Guidance { get; set; } = new();

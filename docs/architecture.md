@@ -304,6 +304,29 @@ choices to the stages the project has and skips agents that are not installed.
 
 The app sets the invariant culture at startup so dollar amounts and counts in messages never use a decimal comma.
 
+## Observability
+
+- **Diff.** `GET /api/runs/{id}/diff` runs `git diff --numstat` and `git diff -U3` for `<base>..<branch>` in the project's repository
+  (the base and branch come from the run's `workspace.json`), so it works after the workspace is released. It returns the file list
+  (added, removed, binary), the patch (cut at 300,000 characters, with a `truncated` flag), or `available: false` with the reason for
+  a run with no branch (the demo project) or a branch git cannot compare. The Changes tab renders it.
+- **Images.** The artifact endpoint serves `.png`, `.jpg`, `.gif` and `.webp` with their image content type;
+  `StageContext.WriteArtifactBytes` lets a stage save a screenshot under the run folder. The UI shows image artifacts in their own tab.
+  The demo project's Implement stage saves a generated PNG so this path is exercised without an agent.
+- **Archive and delete.** `Run.Archived` hides a finished run from the board. `POST /api/runs/{id}/archive` and `/unarchive`, and
+  `DELETE /api/runs/{id}`, are refused (409) while the run is active, and delete also while it holds its workspace. Delete removes the run from
+  `RunStore` (publishing `{id, removed: true}` so open boards drop it), closes its event log (`EventHub.Close`, so Windows lets the folder
+  go) and deletes `runs/<id>/`. The git branch is untouched.
+- **Board.** Search, status and project filters and *Show archived* live in client-side `boardFilter` state, so they survive live updates
+  and navigation. Rows show the run's tokens and cost.
+- **Feed groups.** Each `StageStarted` event opens a `<details>` group for that attempt; later events join it until the next stage
+  starts or the run finishes. Starting a new attempt folds the earlier ones of the same stage, and `StageFinished` stamps the group's header
+  with the outcome.
+- **Browser notifications.** The bell toggles `localStorage['mw.notify']` after the browser grants permission. The global run stream compares
+  each snapshot with the previous one and, only on a status change and only when the page is hidden or unfocused, notifies for
+  WaitingForHuman (titled by reason: Needs you, Ready for you to play, Budget reached), Done, Failed and Interrupted. A run first seen in
+  a snapshot never notifies, so a page load does not fire old news. Clicking opens that run. There is no server-side push.
+
 ## Event types
 
 | Type | UI group | Notes |
@@ -326,6 +349,8 @@ The app sets the invariant culture at startup so dollar amounts and counts in me
 | `POST /api/runs/{id}/decision` `{ action, note?, agent?, retryFrom? }` | `approve`, `retry` or `stop` while the run is `WaitingForHuman` (409 otherwise) |
 | `POST /api/runs/{id}/release` | Give the workspace back (409 with a reason while the run is active or if the checkout or folder removal fails) |
 | `POST /api/runs/{id}/recover` | Continue an `Interrupted` run (409 with a reason otherwise) |
+| `GET /api/runs/{id}/diff` | The run's git diff against its base branch (file list and patch) |
+| `POST /api/runs/{id}/archive`, `/unarchive`, `DELETE /api/runs/{id}` | Hide, restore or permanently delete a finished run (409 while active; delete also while it holds the workspace) |
 | `GET /api/runs/{id}/files/{name}` | An artifact of the run (`spec.md`, `evidence/verify.log`, `handover.md`); only names listed on the run |
 | `GET /api/agents` | Known agent names and definitions, plus `agents.json` errors |
 | `GET /api/agents/health` | Runs each agent's version command and reports availability |
@@ -378,6 +403,6 @@ Exercised against a throwaway repo with the real `claude` CLI:
 
 ## Not built yet
 
-Notifications beyond the tab title, a playtest stage, and the rest of the improvement plan (Unity compile check, cost and budgets,
-history, queue, compare). Verified for the safety work: an agent that commits within the guards, one whose own commit breaks them,
+Phone or other push notifications (browser notifications only), a playtest stage, and the rest of the improvement plan (Unity compile
+check and `.meta` commit, brief templates, task queue, branch hygiene, compare). Verified for the safety work: an agent that commits within the guards, one whose own commit breaks them,
 one that pushes to a bare origin, a plain agent as control, and an agent process that was gone 3 seconds after MoonWalk was hard-killed.

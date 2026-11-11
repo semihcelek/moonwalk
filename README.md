@@ -98,6 +98,27 @@ model and effort too. The Integrate stage needs the Unity Editor open with unity
 `mcp__unityMCP__*` tools, and agy and Muse need unity-mcp in their own configuration. Add `"Integrate"` to the profile's `stages`
 (after `Implement`) to use it.
 
+### Seeing what a run did
+
+- **Changes tab:** the run's git diff against its base branch, with a file list and a colored patch. It keeps working after you
+  release the workspace, because the branch stays in the repository.
+- **Image tabs:** any screenshot a stage saves under the run (`screenshots/...png`) opens in its own tab.
+- **Attempts:** the live feed groups each stage attempt in a collapsible section; when a retry starts, the earlier attempt of that
+  stage folds away. Each header shows the outcome (Passed, Failed, NeedsHuman).
+
+### Finding old runs
+
+The board has a search box (title, id, project, brief), a status filter, a project filter and *Show archived*. Each row shows its
+tokens and cost. On a finished run, **Archive** hides it from the board (nothing on disk changes) and **Delete** removes the run's
+folder (events, artifacts) for good; the git branch is never touched. Delete is refused while a run is active or still holds its
+workspace.
+
+### Notifications
+
+The bell in the top bar turns on browser notifications (the browser asks for permission once). When the tab is in the background you
+are told when a run **needs you** (a gate, a failed or blocked stage, the budget, or the playtest at Handover), **finishes**, **fails**
+or is **interrupted**. Clicking the notification opens that run. They work only while a MoonWalk tab is open; there is no phone push.
+
 ### Presets
 
 The *Agent per stage* section has a **Preset** dropdown. Built in: Claude Opus plans and Sonnet implements, Claude Sonnet plans and
@@ -171,5 +192,5 @@ The browser tab title shows `(n)` while runs wait for you, and those rows are hi
 3. Control surface: gates, pause/resume, retry, guidance notes, Spec, Verify and Handover stages (done)
 4. agy and generic CLI agents, agent health and Settings page, recovery of interrupted runs, worktree mode (done)
 
-Next (see the improvement plan): a Unity compile check and `.meta` auto-commit, run history and
-notifications, a task queue and agent comparison, and a playtest stage.
+Next (see the improvement plan): a Unity compile check and `.meta` auto-commit, a task queue and agent comparison, and a playtest
+stage.

@@ -86,6 +86,20 @@ public sealed class RunStore
         }
     }
 
+    /// <summary>Forgets a run and tells every open board about it. The caller deletes the run folder.</summary>
+    public bool Remove(string id)
+    {
+        lock (_lock)
+        {
+            if (!_runs.Remove(id))
+            {
+                return false;
+            }
+            Changed.Publish(JsonSerializer.Serialize(new { id, removed = true }, Json.Options));
+            return true;
+        }
+    }
+
     public IReadOnlyList<(string Id, string Project)> HeldWorkspaces()
     {
         lock (_lock)
