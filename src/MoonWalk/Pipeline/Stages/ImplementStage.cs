@@ -22,6 +22,7 @@ public sealed class ImplementStage : IStage
         context.SetStageAgent(agent.Name);
         context.Emit(EventTypes.System, $"Running {agent.Name} in {context.WorkDir}.");
 
+        var headBefore = await workspace.Workspace.GetHeadAsync(workspace.State, ct);
         var result = await agent.RunAsync(new AgentRequest(BuildPrompt(context), context.WorkDir), context.Emit, ct);
 
         if (result.CostUsd is { } cost)
@@ -46,12 +47,25 @@ public sealed class ImplementStage : IStage
             return StageResult.Blocked(Short(text, 600));
         }
 
+        var (problem, delta) = await AgentGitCheck.AfterAgentAsync(context, workspace, headBefore, ct);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
         var changes = await workspace.Workspace.GetChangesAsync(workspace.State, ct);
         if (changes.Conflicts.Count > 0)
         {
             return StageResult.Blocked(
                 "The agent edited files that were already modified before the run started, so MoonWalk cannot separate your changes from the agent's: "
                 + string.Join(", ", changes.Conflicts.Take(8)));
+        }
+        if (changes.Paths.Count == 0 && delta.Moved)
+        {
+            // The agent committed its own work and the guards passed: that is the result.
+            var own = delta.Head[..Math.Min(7, delta.Head.Length)];
+            context.UpdateRun(r => r.Commit = own);
+            return StageResult.Passed($"The agent committed its own work ({delta.Commits.Count} commit(s), {delta.ChangedPaths.Count} files). " + Short(result.Text, 250));
         }
         if (changes.Paths.Count == 0)
         {

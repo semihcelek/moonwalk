@@ -35,6 +35,7 @@ public static class CliProcess
 
         using var process = new Process { StartInfo = psi };
         process.Start();
+        ProcessJob.TryAssign(process); // dies with MoonWalk, even if MoonWalk is killed
 
         try
         {

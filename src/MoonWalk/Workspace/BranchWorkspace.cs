@@ -164,6 +164,39 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
         }
     }
 
+    public async Task<string> GetHeadAsync(WorkspaceState state, CancellationToken ct) =>
+        (await Git.RunOrThrowAsync(repoPath, ct, "rev-parse", "HEAD")).Trim();
+
+    public async Task<HeadDelta> InspectAsync(WorkspaceState state, string headBefore, CancellationToken ct)
+    {
+        var head = await GetHeadAsync(state, ct);
+
+        // A push updates the remote-tracking ref in this repository, so this needs no network. The branch did not exist on origin before.
+        var pushed = (await Git.RunAsync(repoPath, ct, "rev-parse", "--verify", "-q", $"refs/remotes/origin/{state.Branch}")).Ok;
+
+        if (head == headBefore)
+        {
+            return new HeadDelta(head, false, [], [], 0, pushed);
+        }
+
+        var commits = (await Git.RunOrThrowAsync(repoPath, ct, "log", "--format=%h %s", $"{headBefore}..{head}"))
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var paths = (await Git.RunOrThrowAsync(repoPath, ct, "diff", "--name-only", "--no-renames", headBefore, head))
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var lines = 0;
+        var numstat = await Git.RunOrThrowAsync(repoPath, ct, "diff", "--numstat", "--no-renames", headBefore, head);
+        foreach (var row in numstat.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var cols = row.Split('\t');
+            if (cols.Length >= 2 && int.TryParse(cols[0], out var added) && int.TryParse(cols[1], out var removed))
+            {
+                lines += added + removed;
+            }
+        }
+        return new HeadDelta(head, true, commits, paths, lines, pushed);
+    }
+
     /// <summary>Commits whatever the agent changed as a local wip commit (never pushed). Does nothing when there is nothing to keep.</summary>
     public async Task CommitWipAsync(WorkspaceState state, string runId, string runDir, CancellationToken ct)
     {

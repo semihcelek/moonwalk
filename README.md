@@ -113,7 +113,12 @@ model and effort too. The Integrate stage needs the Unity Editor open with unity
 Unfinished runs come back as **Interrupted** and still own their workspace. **Recover run** continues where it stopped:
 if it was waiting for you, it asks the same question again; if an agent was cut off, that stage runs again as a retry
 and the agent is told to check what is already there. **Release workspace** is also available instead.
-Caveat: if MoonWalk is killed hard, an agent process it started may keep running; check for stray `claude`/`agy` processes.
+Agent processes are tied to MoonWalk (a Windows job object), so killing MoonWalk also stops the agents it started.
+
+### What MoonWalk checks after an agent runs
+
+MoonWalk commits the agent's work itself, after the guards. If an agent commits on its own, MoonWalk reports it and checks those
+commits against the same guards; if it **pushes** the run branch, the stage is blocked. Nothing in a run is ever pushed by MoonWalk.
 
 ## Steering a run
 
@@ -148,5 +153,5 @@ The browser tab title shows `(n)` while runs wait for you, and those rows are hi
 3. Control surface: gates, pause/resume, retry, guidance notes, Spec, Verify and Handover stages (done)
 4. agy and generic CLI agents, agent health and Settings page, recovery of interrupted runs, worktree mode (done)
 
-Ideas not built: killing agent processes when MoonWalk itself is killed (a Windows job object), notifications beyond the tab
-title, a playtest stage.
+Next (see the improvement plan): a Unity compile check and `.meta` auto-commit, cost and budgets per stage, run history and
+notifications, a task queue and agent comparison, and a playtest stage.

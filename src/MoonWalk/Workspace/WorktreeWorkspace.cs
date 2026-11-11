@@ -79,6 +79,11 @@ public sealed class WorktreeWorkspace(string repoPath, string baseBranch, string
     public Task<(string Log, string DiffStat)> GetHandoverInfoAsync(WorkspaceState state, CancellationToken ct) =>
         Inner(state).GetHandoverInfoAsync(state, ct);
 
+    public Task<string> GetHeadAsync(WorkspaceState state, CancellationToken ct) => Inner(state).GetHeadAsync(state, ct);
+
+    public Task<HeadDelta> InspectAsync(WorkspaceState state, string headBefore, CancellationToken ct) =>
+        Inner(state).InspectAsync(state, headBefore, ct);
+
     public async Task<string?> AbortAsync(WorkspaceState state, string runId, string runDir, CancellationToken ct)
     {
         try

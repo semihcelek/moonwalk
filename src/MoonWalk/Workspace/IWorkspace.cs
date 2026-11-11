@@ -37,6 +37,15 @@ public sealed record AgentChanges(IReadOnlyList<string> Paths, IReadOnlyList<str
 
 public sealed record WorkspaceSession(IWorkspace Workspace, WorkspaceState State);
 
+/// <summary>What an agent did to git on its own while it ran: new commits on the run branch, and whether it pushed the branch.</summary>
+public sealed record HeadDelta(
+    string Head,
+    bool Moved,
+    IReadOnlyList<string> Commits,
+    IReadOnlyList<string> ChangedPaths,
+    int Lines,
+    bool Pushed);
+
 /// <summary>Where a run's code changes happen. Two implementations: the project's own folder on a run branch, or a separate git worktree.</summary>
 public interface IWorkspace
 {
@@ -55,6 +64,12 @@ public interface IWorkspace
     Task<string> CommitAsync(WorkspaceState state, IReadOnlyList<string> paths, string message, string runDir, CancellationToken ct);
 
     Task<(string Log, string DiffStat)> GetHandoverInfoAsync(WorkspaceState state, CancellationToken ct);
+
+    /// <summary>The commit the run branch points at now. Taken before an agent runs, so <see cref="InspectAsync"/> can tell what it did.</summary>
+    Task<string> GetHeadAsync(WorkspaceState state, CancellationToken ct);
+
+    /// <summary>Compares the branch with <paramref name="headBefore"/>: did the agent commit, which files and lines did those commits touch, and did it push?</summary>
+    Task<HeadDelta> InspectAsync(WorkspaceState state, string headBefore, CancellationToken ct);
 
     /// <summary>Keeps unfinished work as a local wip commit on the run branch, then gives the workspace back. Returns a warning when that was not fully possible.</summary>
     Task<string?> AbortAsync(WorkspaceState state, string runId, string runDir, CancellationToken ct);

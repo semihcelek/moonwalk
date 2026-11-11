@@ -75,8 +75,22 @@ checks the workspace is usable (`EnsureReadyAsync`: the right branch is checked 
 with the reason), then restarts the loop. If the run was waiting when MoonWalk stopped (`Run.ResumeWait`, stored at load time),
 the same question is asked again with the stage's old result kept. Otherwise it resumes at the first stage that had not passed;
 an agent stage that was cut off runs again as attempt 2, so its prompt says "this is a retry, check git status and log first".
-The project lock was already re-taken at startup for branch-mode runs that held the workspace. Agent processes that MoonWalk
-started are not killed when MoonWalk is killed hard (no job object), so stray `claude`/`agy` processes can keep editing files.
+The project lock was already re-taken at startup for branch-mode runs that held the workspace. Agent and verify processes are
+in a job object that dies with MoonWalk (see Safety below), so a recovered run never has an old agent still editing the repository.
+
+## Safety (`ProcessJob`, `AgentGitCheck`)
+
+- **Agents die with MoonWalk.** `ProcessJob` is a Windows job object with kill-on-close; `CliProcess` adds every process it starts
+  (agents, verify steps) right after launch, and children join automatically. The OS closes the handle when MoonWalk exits, however it
+  exits, so even a hard kill takes the agent down with it. Without a job (other platforms) only the normal cancel and timeout kill apply.
+  There is a tiny window between a process starting and being added to the job.
+- **Agents touching git.** Before an agent stage, `IWorkspace.GetHeadAsync` records the branch head; afterwards `InspectAsync` reports
+  whether it moved, the commits, files and lines they touched, and whether the run branch exists on `origin` (a push updates the local
+  remote-tracking ref, so this needs no network). `AgentGitCheck` then applies the rules for Implement and Integrate:
+  a **push** is `Blocked`; the agent's **own commits** are allowed but reported as a Warning and checked against the same guards, and if
+  they break the guards the stage fails and names them (they stay on the run branch); an Implement stage whose agent committed everything
+  itself and left nothing uncommitted passes with that as its result. This matters for agents MoonWalk cannot hold to a tool list
+  (agy with `allowedCommands`, Muse with `allowShell`).
 
 ### SpecStage
 
@@ -338,4 +352,6 @@ Exercised against a throwaway repo with the real `claude` CLI:
 
 ## Not built yet
 
-Killing agent processes when MoonWalk is killed (job object), notifications beyond the tab title, a playtest stage.
+Notifications beyond the tab title, a playtest stage, and the rest of the improvement plan (Unity compile check, cost and budgets,
+history, queue, compare). Verified for the safety work: an agent that commits within the guards, one whose own commit breaks them,
+one that pushes to a bare origin, a plain agent as control, and an agent process that was gone 3 seconds after MoonWalk was hard-killed.

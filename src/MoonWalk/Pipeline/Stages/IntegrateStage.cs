@@ -25,6 +25,7 @@ public sealed class IntegrateStage : IStage
         context.Emit(EventTypes.System, $"Running {agent.Name} with unity-mcp in {context.WorkDir}.");
 
         var allowed = context.Profile.Claude.AllowedTools.Concat(UnityTools).ToArray();
+        var headBefore = await workspace.Workspace.GetHeadAsync(workspace.State, ct);
         var result = await agent.RunAsync(new AgentRequest(BuildPrompt(context), context.WorkDir, allowed), context.Emit, ct);
 
         if (result.CostUsd is { } cost)
@@ -46,6 +47,12 @@ public sealed class IntegrateStage : IStage
         if (result.Text is { } text && text.TrimStart().StartsWith("STATUS: BLOCKED", StringComparison.OrdinalIgnoreCase))
         {
             return StageResult.Blocked(Short(text, 600));
+        }
+
+        var (problem, _) = await AgentGitCheck.AfterAgentAsync(context, workspace, headBefore, ct);
+        if (problem is not null)
+        {
+            return problem;
         }
 
         var changes = await workspace.Workspace.GetChangesAsync(workspace.State, ct);
