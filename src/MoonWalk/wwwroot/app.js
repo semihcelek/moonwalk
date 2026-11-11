@@ -496,9 +496,13 @@ async function showBoard() {
       .map(([v, l]) => h('option', { value: v, selected: v === boardFilter.status }, l)));
   const projectSel = h('select', { 'aria-label': 'Project' });
   const archivedBox = h('input', { type: 'checkbox', checked: boardFilter.archived });
+  const groupSwitch = h('div', { class: 'mode-switch compact', role: 'group', 'aria-label': 'Grouping' },
+    h('button', { type: 'button', 'data-group': 'flat' }, 'Flat'),
+    h('button', { type: 'button', 'data-group': 'project' }, 'By project'));
   let projectKey = '';
-  const bar = h('div', { class: 'filter-bar' }, search, statusSel, projectSel, h('label', { class: 'inline' }, archivedBox, 'Show archived'));
-  view.replaceChildren(h('div', { class: 'page-head' }, h('h1', {}, 'Runs'), sub), strip, batchStrip, bar, list);
+  const bar = h('div', { class: 'filter-bar' }, search, statusSel, projectSel, h('label', { class: 'inline' }, archivedBox, 'Show archived'), groupSwitch);
+  const bulk = h('div', { class: 'bulk-bar' });
+  view.replaceChildren(h('div', { class: 'page-head' }, h('h1', {}, 'Runs'), sub), strip, batchStrip, bar, bulk, list);
 
   const matches = (r) => {
     if (!boardFilter.archived && r.archived) return false;
@@ -511,32 +515,93 @@ async function showBoard() {
     return !q || `${r.title} ${r.id} ${r.project} ${r.brief}`.toLowerCase().includes(q);
   };
 
+  const byNewest = (a, b) => b.createdAt.localeCompare(a.createdAt);
+  const needsYou = (r) => r.status === 'WaitingForHuman';
+  const selectable = (r) => !isActive(r.status);
+
+  const updateBulk = () => {
+    const shownFinished = [...runs.values()].filter((r) => matches(r) && selectable(r));
+    const picked = [...selected].map((id) => runs.get(id)).filter(Boolean);
+    const toArchive = picked.filter((r) => !r.archived);
+    const toRestore = picked.filter((r) => r.archived);
+    put(bulk,
+      picked.length ? h('span', { class: 'bulk-count' }, `${picked.length} selected`) : null,
+      toArchive.length ? h('button', { class: 'btn small', type: 'button', onclick: () => archiveRuns(toArchive.map((r) => r.id), true) }, `Archive ${toArchive.length}`) : null,
+      toRestore.length ? h('button', { class: 'btn small', type: 'button', onclick: () => archiveRuns(toRestore.map((r) => r.id), false) }, `Restore ${toRestore.length}`) : null,
+      picked.length ? h('button', { class: 'btn small', type: 'button', onclick: () => { selected.clear(); render(); } }, 'Clear') : null,
+      !picked.length && shownFinished.length ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => { for (const r of shownFinished.filter((x) => !x.archived)) selected.add(r.id); render(); } }, 'Select finished') : null);
+    bulk.hidden = !bulk.childNodes.length;
+    for (const cb of list.querySelectorAll('input[data-run]')) cb.checked = selected.has(cb.dataset.run);
+  };
+
+  const rowOptions = { onSelect: (id, on) => { if (on) selected.add(id); else selected.delete(id); updateBulk(); } };
+
+  const section = (title, count, rows, key, extra) => {
+    const closed = collapsedGroups.has(key);
+    return h('section', { class: 'group' },
+      h('button', {
+        class: 'group-head', type: 'button', 'aria-expanded': closed ? 'false' : 'true',
+        onclick: () => { if (closed) collapsedGroups.delete(key); else collapsedGroups.add(key); render(); },
+      }, h('span', { class: 'chev' }, closed ? '▸' : '▾'), h('span', { class: 'group-name' }, title), h('span', { class: 'group-count' }, String(count)), extra),
+      !closed && h('div', { class: 'runs' }, rows));
+  };
+
   const render = () => {
-    const all = [...runs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const all = [...runs.values()].sort(byNewest);
+    for (const id of [...selected]) if (!runs.has(id) || !matches(runs.get(id))) selected.delete(id);
     const names = [...new Set(all.map((r) => r.project))].sort();
     if (names.join('|') !== projectKey) {
       projectKey = names.join('|');
       put(projectSel, h('option', { value: '' }, 'Any project'),
         names.map((n) => h('option', { value: n, selected: n === boardFilter.project }, n)));
     }
+    for (const b of groupSwitch.querySelectorAll('button')) b.classList.toggle('active', b.dataset.group === boardFilter.group);
     const shown = all.filter(matches);
     const active = all.filter((r) => isActive(r.status)).length;
     sub.textContent = all.length ? `${active} active · ${shown.length} of ${all.length} shown` : '';
     if (!all.length) {
-      list.replaceChildren(h('div', { class: 'empty' },
+      put(list, h('div', { class: 'empty' },
         h('strong', {}, 'No runs yet'),
         'Start one with "New run" and watch the agents work live.'));
     } else if (!shown.length) {
-      list.replaceChildren(h('div', { class: 'empty' }, h('strong', {}, 'No runs match'), 'Change the search or the filters above.'));
+      put(list, h('div', { class: 'empty' }, h('strong', {}, 'No runs match'), 'Change the search or the filters above.'));
+    } else if (boardFilter.group === 'project') {
+      const groups = new Map();
+      for (const r of shown) (groups.get(r.project) ?? groups.set(r.project, []).get(r.project)).push(r);
+      const ordered = [...groups.entries()].map(([name, rs]) => ({
+        name, rs: [...rs.filter(needsYou), ...rs.filter((r) => !needsYou(r))],
+        attention: rs.filter(needsYou).length, newest: rs[0].createdAt,
+      })).sort((a, b) => (b.attention > 0) - (a.attention > 0) || b.newest.localeCompare(a.newest));
+      put(list, ordered.map((g) => {
+        const cost = g.rs.reduce((n, r) => n + totals(r).cost, 0);
+        const running = g.rs.filter((r) => isActive(r.status)).length;
+        return section(g.name, g.rs.length, g.rs.map((r) => runRow(r, { ...rowOptions, selected, hideProject: true })), `p:${g.name}`, [
+          g.attention ? h('span', { class: 'group-badge attn' }, `${g.attention} need you`) : null,
+          running ? h('span', { class: 'group-badge' }, `${running} active`) : null,
+          cost ? h('span', { class: 'group-spend' }, fmtUsd(cost)) : null,
+        ]);
+      }));
     } else {
-      list.replaceChildren(...shown.map(runRow));
+      const waiting = shown.filter(needsYou);
+      const rest = shown.filter((r) => !needsYou(r));
+      const rows = (rs) => rs.map((r) => runRow(r, { ...rowOptions, selected }));
+      if (!waiting.length) put(list, rows(rest));
+      else put(list, section('Needs you', waiting.length, rows(waiting), 'needs-you'), rest.length ? section('Everything else', rest.length, rows(rest), 'rest') : null);
     }
+    updateBulk();
   };
 
   search.addEventListener('input', () => { boardFilter.q = search.value; render(); });
   statusSel.addEventListener('change', () => { boardFilter.status = statusSel.value; render(); });
   projectSel.addEventListener('change', () => { boardFilter.project = projectSel.value; render(); });
   archivedBox.addEventListener('change', () => { boardFilter.archived = archivedBox.checked; render(); });
+  groupSwitch.addEventListener('click', (e) => {
+    const g = e.target.closest('button')?.dataset.group;
+    if (!g || g === boardFilter.group) return;
+    boardFilter.group = g;
+    try { localStorage.setItem('moonwalk.boardGroup', g); } catch { /* storage can be blocked */ }
+    render();
+  });
 
   try {
     for (const r of await api('/api/runs')) runs.set(r.id, r);
@@ -551,7 +616,32 @@ async function showBoard() {
   onRunsChanged = () => { render(); loadUsage(strip); loadBatches(batchStrip); };
 }
 
-const boardFilter = { q: '', status: '', project: '', archived: false };
+let storedGroup = 'flat';
+try { storedGroup = localStorage.getItem('moonwalk.boardGroup') === 'project' ? 'project' : 'flat'; } catch { /* storage can be blocked */ }
+const boardFilter = { q: '', status: '', project: '', archived: false, group: storedGroup };
+const selected = new Set();
+const collapsedGroups = new Set();
+
+/** Archives or restores finished runs from the board, then offers an undo. The server refuses active runs; those are counted, not hidden. */
+async function archiveRuns(ids, archived) {
+  const verb = archived ? 'archive' : 'unarchive';
+  const results = await Promise.allSettled(ids.map((id) => post(`/api/runs/${encodeURIComponent(id)}/${verb}`)));
+  const ok = ids.filter((_, i) => results[i].status === 'fulfilled');
+  const refused = ids.length - ok.length;
+  for (const id of ok) selected.delete(id);
+  const what = `${archived ? 'Archived' : 'Restored'} ${ok.length} run${ok.length === 1 ? '' : 's'}`;
+  toast(refused ? `${what}, ${refused} refused` : what,
+    ok.length ? { label: 'Undo', run: () => archiveRuns(ok, !archived).catch(() => {}) } : null);
+}
+
+/** A short message at the bottom of the page, with an optional action (Undo). */
+function toast(message, action) {
+  document.querySelector('.toast')?.remove();
+  const el = h('div', { class: 'toast', role: 'status' }, h('span', {}, message),
+    action && h('button', { class: 'btn small', type: 'button', onclick: () => { el.remove(); action.run(); } }, action.label));
+  document.body.append(el);
+  setTimeout(() => el.remove(), 7000);
+}
 
 let usageStamp = 0;
 
@@ -571,17 +661,35 @@ async function loadUsage(strip, force = false) {
   } catch { /* the strip is optional */ }
 }
 
-function runRow(run) {
+function runRow(run, opts = {}) {
   const stage = run.currentStage ?? (run.status === 'Done' ? 'finished' : '');
   const t = totals(run);
   const spend = [t.tokens ? `${fmtTokens(t.tokens)} tokens` : null, t.hasCost ? fmtUsd(t.cost) : null].filter(Boolean).join(' · ');
-  return h('a', { class: `run-row${run.status === 'WaitingForHuman' ? ' attn' : ''}${run.archived ? ' archived' : ''}`, href: `#/run/${encodeURIComponent(run.id)}` },
-    h('div', {}, pill(run.status)),
-    h('div', {}, h('div', { class: 'title' }, run.title),
-      h('div', { class: 'meta' }, `${run.project} · ${run.id}${run.batchLabel ? ' · batch ' + run.batchLabel : ''}${spend ? ' · ' + spend : ''}${run.archived ? ' · archived' : ''}`)),
-    h('div', { class: 'meta hide-sm' }, stage),
-    h('div', { class: 'num hide-sm' }, duration(run.createdAt, isActive(run.status) ? null : run.finishedAt ?? run.updatedAt)),
-    h('div', { class: 'num hide-sm', 'data-ago': run.updatedAt }, ago(run.updatedAt)));
+  const finished = !isActive(run.status);
+  /* one line of "why": what it waits for, or why it failed */
+  const note = run.status === 'WaitingForHuman' ? run.waiting?.message : ['Failed', 'Interrupted'].includes(run.status) ? run.error : '';
+  const meta = [opts.hideProject ? null : run.project, run.id, run.batchLabel ? `batch ${run.batchLabel}` : null, run.branch, spend, run.archived ? 'archived' : null]
+    .filter(Boolean).join(' · ');
+  const dots = h('span', { class: 'dots' }, (run.stages ?? []).map((s) => h('i', { class: `dot s-${s.status.toLowerCase()}`, title: `${s.name}: ${STATUS_LABEL[s.status] ?? s.status}` })));
+  return h('div', { class: `run-row${run.status === 'WaitingForHuman' ? ' attn' : ''}${run.archived ? ' archived' : ''}` },
+    finished
+      ? h('input', {
+        type: 'checkbox', class: 'pick', 'data-run': run.id, checked: opts.selected?.has(run.id), 'aria-label': `Select ${run.title}`,
+        onchange: (e) => opts.onSelect?.(run.id, e.target.checked),
+      })
+      : h('span', { class: 'pick' }),
+    h('a', { class: 'run-link', href: `#/run/${encodeURIComponent(run.id)}` },
+      h('div', {}, pill(run.status)),
+      h('div', { class: 'main' }, h('div', { class: 'title' }, run.title),
+        h('div', { class: 'meta' }, meta),
+        note && h('div', { class: `why${run.status === 'WaitingForHuman' ? ' warn' : ' bad'}` }, note)),
+      h('div', { class: 'hide-sm stagecell' }, dots, h('div', { class: 'meta' }, stage)),
+      h('div', { class: 'num hide-sm' }, duration(run.createdAt, isActive(run.status) ? null : run.finishedAt ?? run.updatedAt)),
+      h('div', { class: 'num hide-sm', 'data-ago': run.updatedAt }, ago(run.updatedAt))),
+    h('div', { class: 'row-actions' }, finished && h('button', {
+      class: 'btn small', type: 'button',
+      onclick: () => archiveRuns([run.id], !run.archived),
+    }, run.archived ? 'Restore' : 'Archive')));
 }
 
 /* --------------------------------------------------------------- run detail */

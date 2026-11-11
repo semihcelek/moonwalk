@@ -332,7 +332,11 @@ The app sets the invariant culture at startup so dollar amounts and counts in me
   `RunStore` (publishing `{id, removed: true}` so open boards drop it), closes its event log (`EventHub.Close`, so Windows lets the folder
   go) and deletes `runs/<id>/`. The git branch is untouched.
 - **Board.** Search, status and project filters and *Show archived* live in client-side `boardFilter` state, so they survive live updates
-  and navigation. Rows show the run's tokens and cost.
+  and navigation. Rows show the run's tokens and cost, a stage bar, the branch and a "why" line (the wait message or the error).
+  Flat mode pins `WaitingForHuman` runs in a "Needs you" section; the grouping mode (`boardFilter.group`, `flat` or `project`, saved in
+  `localStorage`) puts runs in collapsible per-project sections (`collapsedGroups`). Finished runs have a checkbox (`selected`) and an
+  Archive/Restore button; bulk archive just calls the existing per-run routes in parallel (the server still refuses active runs) and
+  `toast` offers Undo, which calls the opposite route. No new API.
 - **Feed groups.** Each `StageStarted` event opens a `<details>` group for that attempt; later events join it until the next stage
   starts or the run finishes. Starting a new attempt folds the earlier ones of the same stage, and `StageFinished` stamps the group's header
   with the outcome.

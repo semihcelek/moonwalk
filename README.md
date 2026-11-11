@@ -119,9 +119,14 @@ model and effort too. The Integrate stage needs the Unity Editor open with unity
 ### Finding old runs
 
 The board has a search box (title, id, project, brief), a status filter, a project filter and *Show archived*. Each row shows its
-tokens and cost. On a finished run, **Archive** hides it from the board (nothing on disk changes) and **Delete** removes the run's
-folder (events, artifacts) for good; the git branch is never touched. Delete is refused while a run is active or still holds its
-workspace.
+tokens and cost, a stage bar, its branch, and one line saying why it waits or failed. Runs that need you are pinned in a **Needs you**
+section at the top. The **Flat / By project** switch groups the board into collapsible project sections (with counts, a "need you"
+badge and spend); the choice is remembered.
+
+Finished runs have an **Archive** button on the row (it appears on hover) and a checkbox. **Select finished** or tick several runs to
+archive or restore them together; a toast offers **Undo**. Archiving hides a run from the board (nothing on disk changes). **Delete**,
+on the run page, removes the run's folder (events, artifacts) for good; the git branch is never touched. Delete is refused while a
+run is active or still holds its workspace.
 
 ### Notifications
 
