@@ -129,6 +129,13 @@ public sealed class StageContext
     public string PromptContext()
     {
         var sb = new StringBuilder();
+        if (GetRun() is { Rounds: > 1 } run)
+        {
+            sb.AppendLine($"## Follow-up round {run.Rounds}");
+            sb.AppendLine("This branch already holds the finished work for the brief (earlier commits, listed by `git log --oneline`). It was reviewed and needs corrections.");
+            sb.AppendLine("Read the existing code first, keep what works, and change only what the latest guidance below asks for.");
+            sb.AppendLine();
+        }
         if (Guidance.Count > 0)
         {
             sb.AppendLine("## Guidance from the user (follow it)");

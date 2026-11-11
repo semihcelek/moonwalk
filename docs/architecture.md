@@ -78,6 +78,24 @@ an agent stage that was cut off runs again as attempt 2, so its prompt says "thi
 The project lock was already re-taken at startup for branch-mode runs that held the workspace. Agent and verify processes are
 in a job object that dies with MoonWalk (see Safety below), so a recovered run never has an old agent still editing the repository.
 
+### Reopening a finished run (follow-up rounds)
+
+`POST /api/runs/{id}/reopen` `{ note, from?, agent?, model?, effort?, auto? }` (`RunEngine.ReopenAsync`) takes a Done, Failed or Cancelled run
+back to work on its own branch, so a fix after review (or after an auto-mode run released the workspace) stays on one branch and in one
+run. It refuses an active or `Interrupted` run (recover that instead), an empty note, a changed stage list, a missing workspace record, and
+a branch that no longer exists (checked up front with `git rev-parse refs/heads/<branch>`). Otherwise it raises `Run.Rounds`, clears the
+error, finish time, review-merge fields and the archived flag, sets automation to what the request says (default all off, so the round
+can be reviewed), applies agent, model and effort from the restart stage on like a retry, resets the stages from `from` (default
+`Implement`) to `Pending`, records the note as guidance and starts `ExecuteAsync(reopenFrom: index)`.
+
+`ExecuteAsync` then takes the project lock like any run (it waits if another run holds the workspace). If the run still holds its workspace
+it only calls `EnsureReadyAsync`; otherwise `IWorkspace.ReopenAsync`: branch mode refuses a dirty tree under the `refuse` policy, records
+the branch the repository was on as the new `ReturnTo` (and a fresh baseline under `baseline`), and checks the run branch out; worktree mode
+re-creates the removed folder with `git worktree add <dir> <branch>`. If that fails the run ends `Failed` with the reason and nothing is
+touched (it can be reopened again once fixed). `StageContext.PromptContext` adds a "Follow-up round N" section when `Rounds > 1`: the branch
+already holds the work, keep what works, change only what the guidance asks. The base branch for diffs stays the project's, so Changes and
+`handover.md` show the whole feature; `Rounds` counts attempts to reopen that got past validation, including one that then failed to attach.
+
 ## Safety (`ProcessJob`, `AgentGitCheck`)
 
 - **Agents die with MoonWalk.** `ProcessJob` is a Windows job object with kill-on-close; `CliProcess` adds every process it starts
@@ -443,6 +461,7 @@ automation flags, and how to follow results, and to answer with a split, a `moon
 | `POST /api/runs/{id}/decision` `{ action, note?, agent?, retryFrom? }` | `approve`, `retry` or `stop` while the run is `WaitingForHuman` (409 otherwise) |
 | `POST /api/runs/{id}/release` | Give the workspace back (409 with a reason while the run is active or if the checkout or folder removal fails) |
 | `POST /api/runs/{id}/recover` | Continue an `Interrupted` run (409 with a reason otherwise) |
+| `POST /api/runs/{id}/reopen` `{ note, from?, agent?, model?, effort?, auto? }` | Continue a finished run on its own branch as a new round (409 with a reason if active, interrupted, the note is empty or the branch is gone) |
 | `GET /api/runs/{id}/diff` | The run's git diff against its base branch (file list and patch) |
 | `POST /api/runs/{id}/archive`, `/unarchive`, `DELETE /api/runs/{id}` | Hide, restore or permanently delete a finished run (409 while active; delete also while it holds the workspace) |
 | `GET /api/runs/{id}/files/{name}` | An artifact of the run (`spec.md`, `evidence/verify.log`, `handover.md`); only names listed on the run |

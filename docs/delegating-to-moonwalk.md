@@ -127,6 +127,9 @@ for a human, and the queue waits with it. Full auto never retries and never push
   what is in it. A conflict returns HTTP 409 listing the files and changes nothing.
 - Decisions on a waiting run: `POST {{base_url}}/api/runs/{id}/decision` with `{ "action": "approve" | "retry" | "stop", "note": "...",
   "retryFrom": "Implement" }`. Only do this when the person asked you to; do not approve your own work on their behalf.
+- Fixing a finished run: `POST {{base_url}}/api/runs/{id}/reopen` with `{ "note": "what to change", "from": "Implement" }` continues a Done, Failed
+  or Cancelled run **on its own branch** (same run, new round, automation off unless you pass `"auto": { "plan": true, "implementation": true }`).
+  Prefer this to starting a new run when the work is already on that branch. It needs a clean working tree in branch mode and returns 409 with a reason otherwise.
 
 ## Projects
 

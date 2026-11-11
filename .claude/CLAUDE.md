@@ -127,6 +127,7 @@ Built: agents (Claude, agy, Muse, generic CLI) with live events and health check
 Verify, Handover; gates, retry, pause, guidance, recovery of interrupted runs; guards; per-stage model and effort with presets; usage ledger
 and budgets; Changes tab, images, board filters, archive and delete, grouped feed, browser notifications; auto modes; batches (queue and
 compare); brief templates; branch cleanup; review branch; the delegation guide; Unity `.meta` commit before Handover (`UnityMeta`, tested with a fake agent only, not against a real Editor).
+Continue a finished run on its own branch (`RunEngine.ReopenAsync`, `POST /api/runs/{id}/reopen`): same run, new round, tested with a fake agent.
 
 Left, in rough order (see "Not built yet" in `docs/architecture.md`):
 1. **Unity compile check** for Verify: spike whether MoonWalk can call unity-mcp over HTTP (`http://127.0.0.1:8080/mcp`: refresh, wait for

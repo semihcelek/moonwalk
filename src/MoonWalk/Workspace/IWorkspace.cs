@@ -54,6 +54,12 @@ public interface IWorkspace
     /// <summary>Makes sure the workspace is usable again after a MoonWalk restart (right branch checked out, folder present). Throws with a reason when not.</summary>
     Task EnsureReadyAsync(WorkspaceState state, CancellationToken ct);
 
+    /// <summary>
+    /// Takes a finished run's branch back into use so work can continue on it: branch mode checks it out (refusing a dirty tree like a new run
+    /// does, and remembering where to return to), worktree mode re-creates the removed folder. Throws with a reason when the branch is gone.
+    /// </summary>
+    Task ReopenAsync(WorkspaceState state, Action<string> log, CancellationToken ct);
+
     /// <summary>Everything changed since the run started, minus files that were already modified and are untouched by the agent.</summary>
     Task<AgentChanges> GetChangesAsync(WorkspaceState state, CancellationToken ct);
 

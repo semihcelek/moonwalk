@@ -127,6 +127,9 @@ public sealed class Run
     public string? ReviewBranch { get; set; }
     public string? ReviewCommit { get; set; }
 
+    /// <summary>1 for the first pass; raised each time a finished run is reopened on its branch to continue with fix instructions.</summary>
+    public int Rounds { get; set; } = 1;
+
     /// <summary>Hidden from the board unless "show archived" is on. Only finished runs can be archived.</summary>
     public bool Archived { get; set; }
 

@@ -22,6 +22,37 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
         await Git.RunOrThrowAsync(repoPath, ct, "checkout", state.Branch);
     }
 
+    public async Task ReopenAsync(WorkspaceState state, Action<string> log, CancellationToken ct)
+    {
+        if (!(await Git.RunAsync(repoPath, ct, "rev-parse", "--verify", "-q", $"refs/heads/{state.Branch}")).Ok)
+        {
+            throw new WorkspaceException($"Branch '{state.Branch}' no longer exists.");
+        }
+        var current = await Git.RunAsync(repoPath, ct, "symbolic-ref", "--short", "-q", "HEAD");
+        if (current.Ok && current.Out.Trim() == state.Branch)
+        {
+            return; // the repository was left on the run branch: nothing to switch
+        }
+
+        var dirty = await StatusPathsAsync(ct);
+        if (dirty.Count > 0 && policy == DirtyPolicy.Refuse)
+        {
+            var sample = string.Join(", ", dirty.Take(8)) + (dirty.Count > 8 ? ", ..." : "");
+            throw new WorkspaceException(
+                $"The working tree has {dirty.Count} uncommitted change(s) ({sample}). Commit or stash them, or set dirtyPolicy to 'baseline' in the project profile.");
+        }
+        state.ReturnTo = current.Ok
+            ? current.Out.Trim()
+            : (await Git.RunOrThrowAsync(repoPath, ct, "rev-parse", "HEAD")).Trim();
+        state.Baseline.Clear();
+        foreach (var path in dirty)
+        {
+            state.Baseline[path] = Signature(path);
+        }
+        log($"Checking out branch '{state.Branch}' (was on '{state.ReturnTo}').");
+        await Git.RunOrThrowAsync(repoPath, ct, "checkout", state.Branch);
+    }
+
     public async Task<WorkspaceState> PrepareAsync(string runId, string title, Action<string> log, CancellationToken ct)
     {
         var inside = await Git.RunAsync(repoPath, ct, "rev-parse", "--is-inside-work-tree");

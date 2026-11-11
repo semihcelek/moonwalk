@@ -751,6 +751,9 @@ async function loadUsage(strip, force = false) {
   } catch { /* the strip is optional */ }
 }
 
+/** Set by a board row's Continue button: the run page opens with its "continue on this branch" card showing. */
+let continueRequest = null;
+
 function runRow(run, opts = {}) {
   const stage = run.currentStage ?? (run.status === 'Done' ? 'finished' : '');
   const t = totals(run);
@@ -776,10 +779,15 @@ function runRow(run, opts = {}) {
       h('div', { class: 'hide-sm stagecell' }, dots, h('div', { class: 'meta' }, stage)),
       h('div', { class: 'num hide-sm' }, duration(run.createdAt, isActive(run.status) ? null : run.finishedAt ?? run.updatedAt)),
       h('div', { class: 'num hide-sm', 'data-ago': run.updatedAt }, ago(run.updatedAt))),
-    h('div', { class: 'row-actions' }, finished && h('button', {
-      class: 'btn small', type: 'button',
-      onclick: () => archiveRuns([run.id], !run.archived),
-    }, run.archived ? 'Restore' : 'Archive')));
+    h('div', { class: 'row-actions' },
+      finished && run.branch && run.status !== 'Interrupted' && h('button', {
+        class: 'btn small', type: 'button', title: 'Give fix instructions and continue on the same branch',
+        onclick: () => { continueRequest = run.id; location.hash = `#/run/${encodeURIComponent(run.id)}`; },
+      }, 'Continue'),
+      finished && h('button', {
+        class: 'btn small', type: 'button',
+        onclick: () => archiveRuns([run.id], !run.archived),
+      }, run.archived ? 'Restore' : 'Archive')));
 }
 
 /* --------------------------------------------------------------- run detail */
@@ -806,6 +814,7 @@ async function showRun(id) {
   const facts = h('div', { class: 'facts' });
   const banner = h('div');
   const decisionBox = h('div');
+  const continueBox = h('div', { hidden: true });
   const stagesBox = h('div', { class: 'stages' });
   const briefBox = h('div', { class: 'brief-box' }, h('b', {}, 'Brief'), run.brief);
   const errorSlot = h('div');
@@ -845,7 +854,7 @@ async function showRun(id) {
 
   view.replaceChildren(
     h('div', { class: 'run-head' }, h('a', { class: 'back', href: '#/' }, '← Runs')),
-    head, facts, banner, decisionBox,
+    head, facts, banner, decisionBox, continueBox,
     h('div', { class: 'run-grid' },
       h('section', { class: 'panel side' }, h('h2', {}, 'Stages'), stagesBox, errorSlot, guidanceBox, briefBox),
       h('section', { class: 'panel' },
@@ -933,6 +942,54 @@ async function showRun(id) {
     showTab(activeTab, r);
   };
 
+  /* continue on this branch: a finished run goes back to work on the same branch with fix instructions */
+  let continueOpen = continueRequest === id;
+  continueRequest = null;
+  const contNote = h('textarea', { rows: 3, placeholder: 'What does not work, or what should change? The agent gets this as guidance and sees the code already on the branch.' });
+  const contFrom = h('select', {});
+  const contAgent = h('select', {});
+  const contAuto = h('input', { type: 'checkbox' });
+  const contHint = h('div', { class: 'muted' });
+  let contKey = '';
+  continueBox.append(h('div', { class: 'decision r-review' },
+    h('div', { class: 'decision-head' }, h('b', {}, 'Continue on this branch')),
+    contHint, contNote,
+    h('div', { class: 'decision-row' },
+      h('label', { class: 'inline' }, 'Start from', contFrom),
+      h('label', { class: 'inline' }, 'with', contAgent),
+      h('label', { class: 'inline', title: 'Off by default so you can review this round. On: it approves its own gates and finishes unattended.' }, contAuto, 'auto mode'),
+      h('button', {
+        class: 'btn primary', type: 'button',
+        onclick: () => attempt(async () => {
+          const note = contNote.value.trim();
+          if (!note) { contNote.focus(); return; }
+          await post(`/api/runs/${encodeURIComponent(id)}/reopen`, {
+            note, from: contFrom.value, agent: contAgent.value, auto: contAuto.checked ? { plan: true, implementation: true } : null,
+          });
+          contNote.value = '';
+          contAuto.checked = false;
+          continueOpen = false;
+          continueBox.hidden = true;
+        }),
+      }, 'Continue'),
+      h('button', { class: 'btn', type: 'button', onclick: () => { continueOpen = false; continueBox.hidden = true; } }, 'Cancel'))));
+
+  const renderContinue = (r) => {
+    const can = !['Queued', 'Running', 'Paused', 'WaitingForHuman', 'Interrupted'].includes(r.status) && !!r.branch;
+    continueBox.hidden = !(continueOpen && can);
+    const key = `${r.stages.map((s) => s.name).join(',')}|${r.agent}`;
+    if (key !== contKey) {
+      contKey = key;
+      const keepFrom = contFrom.value;
+      put(contFrom, r.stages.map((s) => h('option', { value: s.name, selected: keepFrom ? s.name === keepFrom : s.name === 'Implement' }, s.name)));
+      put(contAgent, agentNames.map((a) => h('option', { value: a, selected: a === (r.agent || stageAgent(r, 'Implement')) }, a)));
+    }
+    contHint.textContent = r.workspaceMode === 'Worktree'
+      ? `Continues on ${r.branch} in a worktree folder that is re-created. Your own working folder is not touched.`
+      : `Continues on ${r.branch}. The repository switches to it (it needs a clean working tree) and goes back to ${r.returnTo || 'your branch'} when you release.`;
+    return can;
+  };
+
   /* controls and the decision card */
   let waitKey = '';
 
@@ -979,6 +1036,10 @@ async function showRun(id) {
         class: 'btn primary small', type: 'button', title: 'Merge this branch into the project\'s review branch, without touching your working folder',
         onclick: () => attempt(async () => { const res = await post(`/api/runs/${encodeURIComponent(r.id)}/merge-review`); alert(res.message); }),
       }, 'Merge into review branch'),
+      renderContinue(r) && h('button', {
+        class: 'btn primary small', type: 'button', title: 'Give fix instructions and continue on the same branch',
+        onclick: () => { continueOpen = !continueOpen; continueBox.hidden = !continueOpen; if (continueOpen) contNote.focus(); },
+      }, 'Continue on this branch'),
       !live && h('button', { class: 'btn small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/${r.archived ? 'unarchive' : 'archive'}`)) }, r.archived ? 'Unarchive' : 'Archive'),
       !live && !r.workspaceHeld && h('button', { class: 'btn danger small', type: 'button', onclick: () => deleteRun(r) }, 'Delete'));
     guidanceBox.hidden = !live;
@@ -993,6 +1054,7 @@ async function showRun(id) {
       r.reviewMergedAt && h('span', { class: 'review-tag', title: `Merged into ${r.reviewBranch} at ${r.reviewCommit ?? ''}` }, `in ${r.reviewBranch}`),
       (r.auto?.plan || r.auto?.implementation) && h('span', { class: 'auto-tag', title: 'This run can approve itself' },
         r.auto.plan && r.auto.implementation ? 'full auto' : r.auto.plan ? 'auto plan' : 'auto implementation'),
+      r.rounds > 1 && h('span', { title: 'Continued on the same branch with fix instructions' }, 'Round ', h('b', {}, String(r.rounds))),
       r.branch && h('span', {}, 'Branch ', h('b', {}, r.branch)),
       r.commit && h('span', {}, 'Commit ', h('b', {}, r.commit)),
       totals(r).tokens > 0 && h('span', {}, 'Tokens ', h('b', {}, fmtTokens(totals(r).tokens))),

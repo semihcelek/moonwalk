@@ -8,6 +8,9 @@ using MoonWalk.Workspace;
 namespace MoonWalk.Core;
 
 /// <summary>What the person decided while a run was waiting: approve, retry (optionally from an earlier stage, with another agent), or stop.</summary>
+/// <summary>What to change on a finished run's branch (<see cref="Note"/>), where to restart (<see cref="From"/>, default Implement) and, optionally, other agent choices and automation.</summary>
+public sealed record ReopenRequest(string Note, string? From = null, string? Agent = null, string? Model = null, string? Effort = null, AutoMode? Auto = null);
+
 public sealed record DecisionRequest(string Action, string? Note = null, string? Agent = null, string? RetryFrom = null, string? Model = null, string? Effort = null);
 
 /// <summary>
@@ -204,6 +207,125 @@ public sealed class RunEngine
         });
         _ = Task.Run(() => ExecuteAsync(id, run.Brief, profile, stages, control, recover: true));
         return (true, "Recovering the run.");
+    }
+
+    /// <summary>
+    /// Takes a finished run (Done, Failed or Cancelled) back on its own branch to continue with fix instructions: the same run, the same branch,
+    /// a new round. The note becomes guidance, the stages from <see cref="ReopenRequest.From"/> (default Implement) run again, and automation is
+    /// off unless the request turns it on, so the result can be reviewed this time. Needs the branch to still exist and, in branch mode, a clean tree.
+    /// </summary>
+    public async Task<(bool Ok, string Message)> ReopenAsync(string id, ReopenRequest request)
+    {
+        var run = _store.Get(id);
+        if (run is null)
+        {
+            return (false, "Run not found.");
+        }
+        if (_controls.ContainsKey(id) || Run.IsActive(run.Status))
+        {
+            return (false, "The run is still active.");
+        }
+        if (run.Status == RunStatus.Interrupted)
+        {
+            return (false, "Recover an interrupted run instead of reopening it.");
+        }
+        if (string.IsNullOrWhiteSpace(request.Note))
+        {
+            return (false, "Say what should change; the note is what the agent works from.");
+        }
+
+        var entry = _projects.Get(run.Project);
+        if (entry is null || !entry.IsValid)
+        {
+            return (false, $"Project '{run.Project}' is missing or has configuration errors.");
+        }
+        var profile = entry.Profile;
+        IReadOnlyList<IStage> stages;
+        try
+        {
+            stages = PipelineFactory.Create(profile);
+        }
+        catch (ArgumentException ex)
+        {
+            return (false, ex.Message);
+        }
+        if (!stages.Select(s => s.Name).SequenceEqual(run.Stages.Select(s => s.Name)))
+        {
+            return (false, "The project's stages changed since this run started, so it cannot be reopened.");
+        }
+
+        var names = stages.Select(s => s.Name).ToList();
+        var target = request.From is { Length: > 0 } from
+            ? names.FindIndex(n => string.Equals(n, from, StringComparison.OrdinalIgnoreCase))
+            : names.FindIndex(n => string.Equals(n, "Implement", StringComparison.OrdinalIgnoreCase));
+        if (target < 0)
+        {
+            if (request.From is { Length: > 0 })
+            {
+                return (false, $"The project has no stage '{request.From}'.");
+            }
+            target = 0;
+        }
+
+        var agentName = string.IsNullOrWhiteSpace(request.Agent) ? (run.Agent ?? profile.Agent) : request.Agent;
+
+        if (!profile.IsDemo && profile.Workspace != WorkspaceMode.None)
+        {
+            var state = WorkspaceState.Load(Path.Combine(_runsRoot, id));
+            if (state is null)
+            {
+                return (false, "This run has no workspace record, so its branch cannot be found.");
+            }
+            var branch = await Git.RunAsync(profile.RepoPath, CancellationToken.None, "rev-parse", "--verify", "-q", $"refs/heads/{state.Branch}");
+            if (!branch.Ok)
+            {
+                return (false, $"Branch '{state.Branch}' no longer exists, so there is nothing to continue on.");
+            }
+        }
+
+        var control = new RunControl(new CancellationTokenSource(), names);
+        if (!_controls.TryAdd(id, control))
+        {
+            return (false, "The run is already being reopened.");
+        }
+
+        var rounds = run.Rounds + 1;
+        _store.Update(id, r =>
+        {
+            r.Rounds = rounds;
+            r.Status = RunStatus.Queued;
+            r.Error = null;
+            r.FinishedAt = null;
+            r.Waiting = null;
+            r.ResumeWait = null;
+            r.Archived = false;
+            r.Agent = agentName;
+            r.Auto = new AutoMode { Plan = request.Auto?.Plan ?? false, Implementation = request.Auto?.Implementation ?? false, MergeToReview = request.Auto?.MergeToReview ?? false };
+            r.ReviewMergedAt = null;
+            r.ReviewBranch = null;
+            r.ReviewCommit = null;
+            if (!string.IsNullOrWhiteSpace(request.Model) || !string.IsNullOrWhiteSpace(request.Effort) || !string.Equals(agentName, profile.Agent, StringComparison.OrdinalIgnoreCase))
+            {
+                for (var i = target; i < stages.Count; i++)
+                {
+                    if (stages[i] is SpecStage or ImplementStage or IntegrateStage)
+                    {
+                        r.StageAgents[stages[i].Name] = new AgentChoice(agentName, request.Model, request.Effort);
+                    }
+                }
+            }
+            for (var i = target; i < r.Stages.Count; i++)
+            {
+                r.Stages[i].Status = StageStatus.Pending;
+                r.Stages[i].StartedAt = null;
+                r.Stages[i].FinishedAt = null;
+                r.Stages[i].Summary = null;
+            }
+        });
+        _hub.Append(id, EventTypes.Decision, names[target], $"Reopened for follow-up round {rounds}, continuing from {names[target]} on the same branch.");
+        AddGuidanceNote(id, request.Note.Trim(), names[target]);
+        _ = Task.Run(() => ExecuteAsync(id, run.Brief, profile, stages, control, recover: false, reopenFrom: target));
+        return (true, $"Continuing on the run's branch from {names[target]}.");
     }
 
     /* ------------------------------------------------------------ controls */
@@ -417,7 +539,7 @@ public sealed class RunEngine
 
     /* ----------------------------------------------------------- execution */
 
-    private async Task ExecuteAsync(string id, string brief, ProjectProfile profile, IReadOnlyList<IStage> stages, RunControl control, bool recover)
+    private async Task ExecuteAsync(string id, string brief, ProjectProfile profile, IReadOnlyList<IStage> stages, RunControl control, bool recover, int? reopenFrom = null)
     {
         var runDir = Path.Combine(_runsRoot, id);
         var ct = control.Cts.Token;
@@ -454,18 +576,32 @@ public sealed class RunEngine
             }
 
             _store.Update(id, r => r.Status = RunStatus.Running);
-            _hub.Append(id, EventTypes.RunStarted, null, recover ? "Run recovered after a restart." : "Run started.");
+            _hub.Append(id, EventTypes.RunStarted, null, recover ? "Run recovered after a restart." : reopenFrom is not null ? "Run reopened." : "Run started.");
 
             if (usesWorkspace)
             {
                 var workspace = WorkspaceFactory.Create(profile);
-                var state = recover ? WorkspaceState.Load(runDir) : null;
+                var state = recover || reopenFrom is not null ? WorkspaceState.Load(runDir) : null;
                 if (state is null)
                 {
                     _hub.Append(id, EventTypes.System, null, "Preparing workspace.");
                     state = await workspace.PrepareAsync(id, _store.Get(id)!.Title, msg => _hub.Append(id, EventTypes.System, null, msg), ct);
                     Directory.CreateDirectory(runDir);
                     state.Save(runDir);
+                }
+                else if (reopenFrom is not null)
+                {
+                    // Still held (never released): just make sure the branch is checked out. Otherwise take the branch back into use.
+                    if (_store.Get(id)!.WorkspaceHeld)
+                    {
+                        await workspace.EnsureReadyAsync(state, ct);
+                    }
+                    else
+                    {
+                        await workspace.ReopenAsync(state, msg => _hub.Append(id, EventTypes.System, null, msg), ct);
+                        state.Save(runDir);
+                    }
+                    _hub.Append(id, EventTypes.System, null, $"Continuing on branch {state.Branch}.");
                 }
                 else
                 {
@@ -485,8 +621,8 @@ public sealed class RunEngine
             var attempts = new Dictionary<string, int>();
             string? previousFailure = null;
             var budgetWaived = false;
-            var agentName = profile.Agent;
-            var index = 0;
+            var agentName = reopenFrom is not null ? (_store.Get(id)!.Agent ?? profile.Agent) : profile.Agent;
+            var index = reopenFrom ?? 0;
             WaitState? pendingWait = null;
 
             if (recover)

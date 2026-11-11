@@ -68,6 +68,22 @@ public sealed class WorktreeWorkspace(string repoPath, string baseBranch, string
             ? Task.CompletedTask
             : throw new WorkspaceException($"The worktree folder '{state.WorkDir}' no longer exists.");
 
+    public async Task ReopenAsync(WorkspaceState state, Action<string> log, CancellationToken ct)
+    {
+        if (!(await Git.RunAsync(repoPath, ct, "rev-parse", "--verify", "-q", $"refs/heads/{state.Branch}")).Ok)
+        {
+            throw new WorkspaceException($"Branch '{state.Branch}' no longer exists.");
+        }
+        if (Directory.Exists(state.WorkDir))
+        {
+            return;
+        }
+        await Git.RunAsync(repoPath, ct, "worktree", "prune");
+        Directory.CreateDirectory(Path.GetDirectoryName(state.WorkDir.TrimEnd('\\', '/')) ?? state.WorkDir);
+        log($"Re-creating worktree {state.WorkDir} for branch {state.Branch}.");
+        await Git.RunOrThrowAsync(repoPath, ct, "worktree", "add", state.WorkDir, state.Branch);
+    }
+
     public Task<AgentChanges> GetChangesAsync(WorkspaceState state, CancellationToken ct) => Inner(state).GetChangesAsync(state, ct);
 
     public Task<int> StageAsync(WorkspaceState state, IReadOnlyList<string> paths, string runDir, CancellationToken ct) =>

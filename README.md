@@ -136,6 +136,20 @@ Runs that came from the same queue or comparison fold into one block (**Queue: n
 are active or failed). Click it to open the rows, **Archive N** archives its finished runs, **Open** goes to the batch page. A block
 with a run waiting for you stays open.
 
+### Continuing on a finished run
+
+Auto mode finishes and releases the workspace, and testing often shows something is wrong. **Continue on this branch** (run page, or
+**Continue** on the board row) takes a Done, Failed or Cancelled run back **on its own branch**: you write what to change, pick the
+stage to start from (Implement by default) and optionally another agent, and the run starts a new round. It is the same run with the
+same branch, so one feature stays one branch, and the events, cost and handover stay in one place. Nothing is created beside it.
+
+- The note becomes guidance, and the agent is told this is a follow-up round on a branch that already holds the work.
+- Automation is off for the new round unless you tick *auto mode*, so you can review this time. The run's "merged into the review
+  branch" mark is cleared; merge it again after the fix.
+- Branch mode needs a clean working tree (as a new run does) and switches the repository to the branch; release switches it back.
+  Worktree mode re-creates the removed folder. It is refused if the branch was deleted, or the run is still active.
+- Each round adds commits to the same branch, and the run page shows the whole branch against its base. Rounds can repeat.
+
 Keyboard on the board: `j` / `k` move the highlighted row, `Enter` opens it, `e` archives or restores it, `x` selects it, `/` jumps to
 search (`Esc` leaves it) and `n` opens the New run dialog.
 
@@ -264,6 +278,7 @@ commits against the same guards; if it **pushes** the run branch, the stage is b
 | Review before the next stage | List it in the profile's `gates`; the run waits at **Needs you** |
 | Tell the agents something | **Add note** on the run page; every later agent prompt includes it |
 | Redo a stage differently | **Retry from** any stage, with an optional note and agent; the failure reason is passed to the agent |
+| Fix something after the run finished (also after auto mode) | **Continue on this branch** on the run page (or **Continue** on its board row): see below |
 | Stop between stages | **Pause** (takes effect before the next stage), **Resume** later |
 | Abort | **Cancel run** (kills the agent process tree) or **Stop run** at a decision |
 | See what it did | Live feed, plus tabs for `spec.md`, `verify.log` and `handover.md` |

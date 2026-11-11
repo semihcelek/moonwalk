@@ -114,6 +114,8 @@ public static class ApiEndpoints
 
         app.MapPost("/api/runs/{id}/recover", async (string id, RunEngine engine) => Reply(await engine.RecoverAsync(id)));
 
+        app.MapPost("/api/runs/{id}/reopen", async (string id, ReopenRequest request, RunEngine engine) => Reply(await engine.ReopenAsync(id, request)));
+
         app.MapGet("/api/agents", (AgentRegistry agents) =>
             Results.Json(new { agents = agents.Names, details = agents.List(), errors = agents.Errors }, Json.Options));
 
