@@ -125,6 +125,8 @@ for a human, and the queue waits with it. Full auto never retries and never push
 - `GET {{base_url}}/api/runs/{id}/diff`: what the run changed in git. `branch` on the run names the branch to test.
 - `POST {{base_url}}/api/runs/{id}/merge-review`: merge a Done run into the review branch. `GET {{base_url}}/api/review?project=<name>` shows
   what is in it. A conflict returns HTTP 409 listing the files and changes nothing.
+- Before starting a run on a branch-mode project: `GET {{base_url}}/api/projects/{name}/preflight` lists what the run would hit (uncommitted changes,
+  the repository on another branch, a run holding the workspace); a `block` note means the run would refuse or fail.
 - Decisions on a waiting run: `POST {{base_url}}/api/runs/{id}/decision` with `{ "action": "approve" | "retry" | "stop", "note": "...",
   "retryFrom": "Implement" }`. Only do this when the person asked you to; do not approve your own work on their behalf.
 - Fixing a finished run: `POST {{base_url}}/api/runs/{id}/reopen` with `{ "note": "what to change", "from": "Implement" }` continues a Done, Failed

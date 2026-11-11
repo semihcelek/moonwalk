@@ -100,6 +100,37 @@ public sealed class RunStore
         }
     }
 
+    /// <summary>
+    /// What a finished run of a project usually costs, per agent, from its latest Done runs: median dollars (only where the agent reports them), tokens
+    /// and working time (the sum of its stage durations, so time spent waiting for you at a gate does not count).
+    /// </summary>
+    public object TypicalFor(string project, int take = 20)
+    {
+        List<Run> done;
+        lock (_lock)
+        {
+            done = _runs.Values.Where(r => r.Project.Equals(project, StringComparison.OrdinalIgnoreCase) && r.Status == RunStatus.Done)
+                .OrderByDescending(r => r.CreatedAt).Take(take).ToList();
+        }
+        static double? Median(IEnumerable<double> values)
+        {
+            var sorted = values.OrderBy(v => v).ToList();
+            return sorted.Count == 0 ? null : sorted.Count % 2 == 1 ? sorted[sorted.Count / 2] : (sorted[sorted.Count / 2 - 1] + sorted[sorted.Count / 2]) / 2;
+        }
+        return new
+        {
+            project,
+            byAgent = done.GroupBy(r => r.Agent ?? "").Select(g => new
+            {
+                agent = g.Key,
+                runs = g.Count(),
+                medianCostUsd = Median(g.Where(r => r.Usage.Any(u => u.CostUsd is not null)).Select(r => r.Usage.Sum(u => u.CostUsd ?? 0))),
+                medianTokens = Median(g.Where(r => r.Usage.Any(u => u.Tokens is not null)).Select(r => (double)r.Usage.Sum(u => u.Tokens ?? 0))),
+                medianSeconds = Median(g.Select(r => r.Stages.Where(s => s.StartedAt is not null && s.FinishedAt is not null).Sum(s => (s.FinishedAt!.Value - s.StartedAt!.Value).TotalSeconds)).Where(x => x > 0)),
+            }).ToList(),
+        };
+    }
+
     public IReadOnlyList<(string Id, string Project)> HeldWorkspaces()
     {
         lock (_lock)

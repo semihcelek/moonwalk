@@ -413,15 +413,38 @@ a.btn { display: inline-flex; align-items: center; }
 /* ---------- modal ---------- */
 dialog {
   background: var(--surface); color: var(--text); border: 1px solid var(--border-strong);
-  border-radius: 14px; padding: 0; width: min(560px, calc(100vw - 32px));
+  border-radius: 14px; padding: 0; width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: hidden;
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
 }
 dialog::backdrop { background: rgba(4, 6, 10, 0.7); backdrop-filter: blur(3px); }
-.modal { padding: 22px; display: flex; flex-direction: column; gap: 14px; }
+.modal { padding: 0; display: flex; flex-direction: column; gap: 0; max-height: calc(100vh - 32px); }
 .modal h2 { margin: 0; font-size: 17px; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > span { color: var(--muted); font-size: 12px; font-weight: 600; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.modal-head { padding: 20px 22px 12px; display: flex; flex-direction: column; gap: 12px; flex: none; }
+.modal-body { padding: 4px 22px 16px; display: flex; flex-direction: column; gap: 14px; overflow: auto; min-height: 0; flex: 1 1 auto; }
+.modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 12px 22px; border-top: 1px solid var(--border); background: var(--surface); flex: none; }
+.modal-summary { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); min-width: 0; }
+.modal-summary span:empty { display: none; }
+.field-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.field-head label { color: var(--muted); font-size: 12px; font-weight: 600; }
+.brief-tools { display: flex; gap: 6px; align-items: center; }
+.brief-tools select { width: auto; max-width: 200px; padding: 4px 8px; font-size: 12px; }
+.tips { font-size: 12px; color: var(--muted); }
+.tips summary { cursor: pointer; }
+.tips ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.pipeline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
+.pipeline:empty { display: none; }
+.pipe-chip { font-size: 11px; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text); white-space: nowrap; }
+.pipe-arrow { color: var(--faint); font-size: 11px; }
+.pipe-mcp { flex-basis: 100%; font-size: 11px; color: var(--muted); }
+.preflight { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.preflight:empty { display: none; }
+.pf { display: flex; gap: 8px; font-size: 12px; line-height: 1.45; color: var(--muted); }
+.pf-icon { flex: none; width: 14px; text-align: center; }
+.pf-ok { color: var(--ok); }
+.pf-warn { color: var(--warn); }
+.pf-block { color: var(--bad); }
 
 /* ---------- scrollbars ---------- */
 * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
@@ -486,3 +509,7 @@ dialog::backdrop { background: rgba(4, 6, 10, 0.7); backdrop-filter: blur(3px); 
 .cont-options { margin-top: 8px; }
 .cont-options summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .cont-options .decision-row { margin-top: 8px; }
+
+/* a [hidden] element stays hidden even when a class gives it a display value */
+[hidden] { display: none !important; }
+.stage-row select { text-overflow: ellipsis; }

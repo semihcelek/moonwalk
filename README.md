@@ -194,6 +194,22 @@ The New run dialog has two checkboxes under **Automation**; a project profile ca
 With only one box ticked, failures still wait for you. Full auto never retries on its own and never merges or pushes: the result is a
 branch left in the repository for you to look at later. The run page shows a *full auto* / *auto plan* / *auto implementation* tag.
 
+### The New run dialog
+
+Under the project the dialog shows what a run there will do, before you press Start:
+
+- **Stages** as chips (a pause marker after a gate, the Verify command) and which stages get which MCP servers.
+- A **pre-flight check** of the repository (read-only git queries): which branch it is on and that a run switches to the base branch
+  first, uncommitted changes (a run is refused under `dirtyPolicy: refuse`; under `baseline` they are remembered and left alone), a
+  change that Git would refuse to carry over to the base branch (the same file differs there), and another run that still holds the
+  workspace so a new one would wait. **Re-check** reads it again.
+- **Tips for briefs in this project**: the profile's `briefingNotes`, folded.
+- In *Agent per stage* the blank entries say what "default" is for this project (for example "default · muse", "default · Muse
+  Spark", "default · high"). The footer shows the automation that will apply (and whether it is the project default) and what a run
+  of this project usually costs and how long it works with the agent that will implement, from its last Done runs (working time
+  only; the wait at a gate does not count; dollars only where the agent reports them). The footer, with **Start run**, stays on
+  screen while the form scrolls; **Ctrl+Enter** starts the run. A line under the brief previews the run title.
+
 ### Queue and compare
 
 The **New run** dialog has a switch at the top:

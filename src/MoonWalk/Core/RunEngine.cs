@@ -1104,6 +1104,10 @@ public sealed class RunEngine
         }
     }
 
+    /// <summary>The run that holds a branch-mode project's workspace right now (a new run on that project would wait for it), or null.</summary>
+    public (string Id, string Title)? HolderOf(string project) =>
+        _holders.TryGetValue(project, out var id) && _store.Get(id) is { } run ? (id, run.Title) : null;
+
     private SemaphoreSlim LockFor(string project) => _locks.GetOrAdd(project, _ => new SemaphoreSlim(1, 1));
 
     private void ReleaseLock(string project, string runId)

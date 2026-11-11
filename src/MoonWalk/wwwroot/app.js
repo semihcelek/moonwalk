@@ -1288,12 +1288,8 @@ async function loadProjects() {
     catalog = await api('/api/models');
     agentList = (await api('/api/agents')).agents;
   } catch { catalog = []; agentList = []; }
-  showProjectNote(projects);
-  renderStageAgents(projects.find((x) => x.name === projectSelect.value));
-  projectSelect.onchange = () => {
-    showProjectNote(projects);
-    renderStageAgents(projects.find((x) => x.name === projectSelect.value));
-  };
+  refreshProjectPanel();
+  projectSelect.onchange = refreshProjectPanel;
 }
 
 /* Per-stage agent / model / effort pickers. The catalog (/api/models) says which models and efforts each agent accepts. */
@@ -1310,13 +1306,16 @@ const fill = (select, items, blankLabel) => {
   select.value = items.some(([v]) => v === keep) ? keep : '';
 };
 
-function refreshStageRow(refs, defaultAgent) {
+/** Fills a stage row's model and effort lists for its agent. The blank entries say what "default" means for this project (from its profile). */
+function refreshStageRow(refs, defaultAgent, defaults) {
   const agent = refs.agent.value || defaultAgent;
   const entry = catalog.find((c) => c.agent === agent);
-  fill(refs.model, (entry?.models ?? []).map((m) => [m.id, m.label]), entry ? 'default model' : 'n/a');
+  const def = defaults?.[agent];
+  const defModel = def?.model ? (entry?.models.find((m) => m.id === def.model)?.label ?? def.model) : null;
+  fill(refs.model, (entry?.models ?? []).map((m) => [m.id, m.label]), entry ? (defModel ? `default · ${defModel}` : 'default model') : 'n/a');
   const model = entry?.models.find((m) => m.id === refs.model.value);
   const efforts = model ? model.efforts : (entry?.efforts ?? []);
-  fill(refs.effort, efforts.map((e) => [e, e]), efforts.length ? 'default effort' : (entry?.effortNote ? 'in model name' : 'n/a'));
+  fill(refs.effort, efforts.map((e) => [e, e]), efforts.length ? (def?.effort ? `default · ${def.effort}` : 'default effort') : (entry?.effortNote ? 'in model name' : 'n/a'));
   refs.model.disabled = !entry;
   refs.effort.disabled = efforts.length === 0;
 }
@@ -1331,6 +1330,7 @@ function renderStageAgents(project) {
   autoPlan.checked = !!project?.auto?.plan;
   autoImpl.checked = !!project?.auto?.implementation;
   autoMerge.checked = !!project?.auto?.mergeToReview;
+  updateAutoSummary();
   stageSelects = {};
   const stages = (project?.stages ?? []).filter((s) => STAGE_LABELS[s]);
   stageAgentsBox.hidden = !project || project.name === 'demo' || stages.length === 0;
@@ -1338,10 +1338,10 @@ function renderStageAgents(project) {
   if (stageAgentsBox.hidden) return;
   for (const stage of stages) {
     const refs = { agent: h('select', {}), model: h('select', {}), effort: h('select', {}) };
-    fill(refs.agent, agentList.map((a) => [a, a]), `default (${project.agent})`);
-    refs.agent.onchange = () => { refs.model.value = ''; refreshStageRow(refs, project.agent); };
-    refs.model.onchange = () => refreshStageRow(refs, project.agent);
-    refreshStageRow(refs, project.agent);
+    fill(refs.agent, agentList.map((a) => [a, a]), `default · ${project.agent}`);
+    refs.agent.onchange = () => { refs.model.value = ''; refreshStageRow(refs, project.agent, project.defaults); updateTypical(); };
+    refs.model.onchange = () => refreshStageRow(refs, project.agent, project.defaults);
+    refreshStageRow(refs, project.agent, project.defaults);
     stageSelects[stage] = refs;
     stageAgentRows.append(h('div', { class: 'stage-row' }, h('span', { class: 'stage-name' }, STAGE_LABELS[stage]), refs.agent, refs.model, refs.effort));
   }
@@ -1369,9 +1369,9 @@ function applyPreset(preset) {
     refs.agent.value = choice.agent ?? '';
     if (refs.agent.value !== (choice.agent ?? '')) continue; // that agent is not installed here
     refs.model.value = '';
-    refreshStageRow(refs, refs.agent.value);
+    refreshStageRow(refs, refs.agent.value, currentProject()?.defaults);
     refs.model.value = choice.model ?? '';
-    refreshStageRow(refs, refs.agent.value);
+    refreshStageRow(refs, refs.agent.value, currentProject()?.defaults);
     refs.effort.value = choice.effort ?? '';
   }
 }
@@ -1408,8 +1408,9 @@ let briefTemplates = [];
 
 async function loadBriefs() {
   try { briefTemplates = await api('/api/briefs'); } catch { briefTemplates = []; }
-  put(briefSelect, h('option', { value: '' }, briefTemplates.length ? 'Brief template…' : 'No saved brief templates'),
+  put(briefSelect, h('option', { value: '' }, 'Templates…'),
     briefTemplates.map((t) => h('option', { value: t.name }, t.name)));
+  briefSelect.hidden = briefTemplates.length === 0;
   briefDelete.hidden = true;
 }
 
@@ -1462,6 +1463,7 @@ function applyMode() {
     : 'Describe the feature or fix. The spec stage turns this into acceptance criteria.';
   submitBtn.textContent = { single: 'Start run', queue: 'Start queue', compare: 'Start comparison' }[runMode];
   if (runMode === 'compare') renderCompareList();
+  updateTitlePreview();
 }
 
 function renderCompareList() {
@@ -1498,6 +1500,122 @@ function showProjectNote(projects) {
   const bad = projects.filter((x) => !x.valid).map((x) => `${x.name}: ${x.errors.join(' ')}`);
   if (bad.length) projectNote.textContent += `\nNot usable: ${bad.join(' | ')}`;
 }
+
+/* ---- the rest of the New run dialog: what a run here will do, before you press Start ---- */
+const pipelineBox = document.getElementById('pipeline');
+const preflightBox = document.getElementById('preflight');
+const tipsBox = document.getElementById('projectTips');
+const tipsList = document.getElementById('tipsList');
+const titlePreview = document.getElementById('titlePreview');
+const autoSummary = document.getElementById('autoSummary');
+const typicalLine = document.getElementById('typicalLine');
+let preflightToken = 0;
+let typicalData = null;
+
+function refreshProjectPanel() {
+  const p = currentProject();
+  showProjectNote(currentProjects);
+  renderStageAgents(p);
+  renderPipeline(p);
+  renderTips(p);
+  runPreflight(p);
+  loadTypical(p);
+  updateTitlePreview();
+}
+
+/** Stage chips (a pause marker after a gate, the Verify command) and which stages get which MCP servers. */
+function renderPipeline(p) {
+  pipelineBox.replaceChildren();
+  if (!p || p.name === 'demo' || !p.stages?.length) return;
+  const chips = [];
+  p.stages.forEach((s, i) => {
+    if (i) chips.push(h('span', { class: 'pipe-arrow' }, '→'));
+    const gate = (p.gates ?? []).some((g) => g.toLowerCase() === s.toLowerCase());
+    const extra = s === 'Verify' && p.verify?.length ? ` · ${p.verify[0]}${p.verify.length > 1 ? ` +${p.verify.length - 1}` : ''}` : '';
+    chips.push(h('span', { class: 'pipe-chip', title: gate ? 'The run waits for you after this stage' : '' }, s + extra + (gate ? ' ⏸' : '')));
+  });
+  const order = (k) => { const i = p.stages.findIndex((s) => s.toLowerCase() === k.toLowerCase()); return i < 0 ? 99 : i; };
+  const mcp = Object.entries(p.mcp ?? {}).filter(([, v]) => v.length).sort((x, y) => order(x[0]) - order(y[0]));
+  put(pipelineBox, chips,
+    mcp.length > 0 && h('div', { class: 'pipe-mcp' }, `MCP: ${mcp.map(([k, v]) => `${k} → ${v.join(', ')}`).join(' · ')} (claude and muse only)`));
+}
+
+function renderTips(p) {
+  const notes = p?.briefingNotes ?? [];
+  tipsBox.hidden = notes.length === 0;
+  put(tipsList, notes.map((n) => h('li', {}, n)));
+}
+
+/** Read-only look at the repository: branch, uncommitted changes, another run holding the workspace. Stale answers are dropped. */
+async function runPreflight(p) {
+  const token = ++preflightToken;
+  preflightBox.replaceChildren();
+  if (!p || p.name === 'demo' || p.workspace === 'none') return;
+  preflightBox.append(h('div', { class: 'pf pf-info' }, h('span', { class: 'pf-icon' }, '…'), 'Checking the repository…'));
+  try {
+    const r = await api(`/api/projects/${encodeURIComponent(p.name)}/preflight`);
+    if (token !== preflightToken) return;
+    const icon = { ok: '✓', info: 'ℹ', warn: '⚠', block: '✕' };
+    put(preflightBox,
+      r.notes.map((n) => h('div', { class: `pf pf-${n.level}` }, h('span', { class: 'pf-icon' }, icon[n.level] ?? '•'), n.text)),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => runPreflight(currentProject()) }, 'Re-check'));
+  } catch (err) {
+    if (token === preflightToken) put(preflightBox, h('div', { class: 'pf pf-info' }, `Could not check the repository: ${err.message}`));
+  }
+}
+
+/** What a finished run of this project usually costs and how long it works, from past runs of the agent that will implement. */
+async function loadTypical(p) {
+  typicalData = null;
+  typicalLine.textContent = '';
+  if (!p || p.name === 'demo') return;
+  try { typicalData = await api(`/api/projects/${encodeURIComponent(p.name)}/typical`); } catch { return; }
+  if (currentProject()?.name === p.name) updateTypical();
+}
+
+function updateTypical() {
+  const p = currentProject();
+  if (!typicalData || !p) { typicalLine.textContent = ''; return; }
+  const agent = stageSelects.Implement?.agent.value || p.agent;
+  const row = typicalData.byAgent.find((a) => a.agent === agent);
+  if (!row) {
+    typicalLine.textContent = typicalData.byAgent.length ? `No finished ${agent} runs here yet to estimate from.` : 'No finished runs here yet to estimate from.';
+    return;
+  }
+  const parts = [
+    row.medianCostUsd != null ? `~${fmtUsd(row.medianCostUsd)}` : null,
+    row.medianTokens ? `${fmtTokens(Math.round(row.medianTokens))} tokens` : null,
+    row.medianSeconds ? fmtDuration(row.medianSeconds * 1000) : null,
+  ].filter(Boolean);
+  typicalLine.textContent = `Usually ${parts.join(' · ')} per run with ${agent} (last ${row.runs} run${row.runs === 1 ? '' : 's'})`;
+}
+
+function updateAutoSummary() {
+  const on = [autoPlan.checked && 'plan', autoImpl.checked && 'implementation', autoMerge.checked && 'merge to review'].filter(Boolean);
+  const d = currentProject()?.auto;
+  const same = !!d && !!d.plan === autoPlan.checked && !!d.implementation === autoImpl.checked && !!d.mergeToReview === autoMerge.checked;
+  autoSummary.textContent = `Auto: ${on.length ? on.join(' + ') : 'off'}${same ? ' (project default)' : ''}`;
+}
+
+/** The first line of the brief becomes the run title; in a queue, how many briefs there are. */
+function updateTitlePreview() {
+  const text = briefInput.value.trim();
+  titlePreview.hidden = !text;
+  if (!text) return;
+  if (runMode === 'queue') {
+    const n = text.split(/^\s*-{3,}\s*$/m).map((b) => b.trim()).filter(Boolean).length;
+    titlePreview.textContent = `${n} brief${n === 1 ? '' : 's'} in this queue`;
+    return;
+  }
+  const first = cleanTitle(text.split('\n', 1)[0].trim());
+  titlePreview.textContent = `Run title: ${first.length > 72 ? first.slice(0, 72).trimEnd() + '…' : first}`;
+}
+
+briefInput.addEventListener('input', updateTitlePreview);
+for (const box of [autoPlan, autoImpl, autoMerge]) box.addEventListener('change', updateAutoSummary);
+dialog.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.getElementById('newRunForm').requestSubmit(); }
+});
 
 document.getElementById('newRunBtn').addEventListener('click', async () => {
   try { await loadProjects(); } catch { /* keep whatever is listed */ }

@@ -493,7 +493,9 @@ automation flags, and how to follow results, and to answer with a split, a `moon
 | `GET /api/agents` | Known agent names and definitions, plus `agents.json` errors |
 | `GET /api/agents/health` | Runs each agent's version command and reports availability |
 | `POST /api/agents/reload` | Re-read `agents.json` |
-| `GET /api/projects`, `POST /api/projects/reload` | Project profiles with validity and errors; reload from disk |
+| `GET /api/projects`, `POST /api/projects/reload` | Project profiles with validity and errors (plus `gates`, `verify` commands, `mcp` stage map, `briefingNotes` and each agent's default model and effort, which the New run dialog shows); reload from disk |
+| `GET /api/projects/{name}/preflight` | `{ notes: [{ level: ok|info|warn|block, text }] }`: what a run would hit right now (branch, uncommitted changes under the profile's `dirtyPolicy`, files that would stop the checkout of the base branch, another run holding the workspace). Read-only git queries (`Workspace/Preflight.cs`) |
+| `GET /api/projects/{name}/typical` | Median dollars, tokens and working time per agent over the project's latest 20 Done runs (`RunStore.TypicalFor`; working time is the sum of stage durations) |
 | `GET /api/stream` | SSE: `run` events carry a full run snapshot on every change (drives the board) |
 | `GET /api/runs/{id}/stream` | SSE: `ev` events carry run events. Resumes from `Last-Event-ID` or `?after=` |
 

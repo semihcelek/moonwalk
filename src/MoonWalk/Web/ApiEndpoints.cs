@@ -372,11 +372,34 @@ public static class ApiEndpoints
                 agent = e.Profile.IsDemo ? null : e.Profile.Agent,
                 auto = e.Profile.Auto,
                 stages = e.Profile.Stages,
+                gates = e.Profile.Gates,
+                verify = e.Profile.Verify.Select(v => (v.Command + " " + string.Join(' ', v.Args)).Trim()).ToArray(),
+                mcp = e.Profile.Mcp.Stages,
+                briefingNotes = e.Profile.BriefingNotes,
+                defaults = e.Profile.IsDemo ? null : new Dictionary<string, object>
+                {
+                    ["claude"] = new { model = e.Profile.Claude.Model, effort = e.Profile.Claude.Effort },
+                    ["agy"] = new { model = e.Profile.Agy.Model, effort = e.Profile.Agy.Effort },
+                    ["muse"] = new { model = e.Profile.Muse.Model, effort = e.Profile.Muse.Effort },
+                },
                 valid = e.IsValid,
                 errors = e.Errors,
                 file = e.File,
             }),
             Json.Options));
+
+        app.MapGet("/api/projects/{name}/preflight", async (string name, ProjectRegistry projects, RunEngine engine, CancellationToken ct) =>
+        {
+            var entry = projects.Get(name);
+            if (entry is null || !entry.IsValid)
+            {
+                return Results.NotFound(new { error = "Unknown or invalid project." });
+            }
+            var notes = await Preflight.CheckAsync(entry.Profile, entry.Profile.Workspace == WorkspaceMode.Branch ? engine.HolderOf(name) : null, ct);
+            return Results.Json(new { notes }, Json.Options);
+        });
+
+        app.MapGet("/api/projects/{name}/typical", (string name, RunStore store) => Results.Json(store.TypicalFor(name), Json.Options));
 
         app.MapPost("/api/projects/reload", (ProjectRegistry projects) =>
         {
