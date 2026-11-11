@@ -70,8 +70,8 @@
     "integrateAllowPaths": []
   },
 
-  // MCP servers the claude agent may use, per agent stage (Spec, Implement, Integrate). Only the listed servers are visible to that stage and
-  // the project's own .mcp.json is not loaded. Muse, agy and generic agents cannot be given servers (a warning says so).
+  // MCP servers the claude and muse agents may use, per agent stage (Spec, Implement, Integrate). Only the listed servers are visible to that stage and
+  // the project's own .mcp.json is not loaded. The claude and muse agents get them; agy and generic agents cannot (a warning says so).
   // "mcp": {
   //   "servers": {
   //     "my-knowledge": { "type": "stdio", "command": "my-mcp", "args": ["mcp", "--repo", "C:\\Users\\me\\Projects\\MyGame"] },

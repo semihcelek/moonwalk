@@ -159,6 +159,10 @@ public sealed class ProjectRegistry(string projectsDir, AgentRegistry agents)
 
         foreach (var (name, server) in p.Mcp.Servers)
         {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(name, "^[A-Za-z0-9_-]+$"))
+            {
+                errors.Add($"mcp server '{name}': use only letters, digits, '-' and '_' in the name.");
+            }
             var type = (server.Type ?? "").ToLowerInvariant();
             if (type is not ("stdio" or "http"))
             {

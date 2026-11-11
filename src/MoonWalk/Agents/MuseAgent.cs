@@ -16,6 +16,61 @@ public sealed class MuseAgent(MuseOptions options) : IAgent
 
     public string Name => "muse";
 
+    /// <summary>
+    /// Muse's own shape for MCP servers: <c>{"command","args"}</c> for stdio and <c>{"url"}</c> for http (no <c>type</c> key; verified against muse 1.4.14, which refuses
+    /// unknown keys). Its <c>env</c> values must be <c>${VAR}</c> references, so a server's env is not passed and a note says so.
+    /// </summary>
+    private static (List<string> Args, List<string> Notes) BuildMcpArgs(string configFile)
+    {
+        var args = new List<string>();
+        var notes = new List<string>();
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(configFile));
+        if (!doc.RootElement.TryGetProperty("mcpServers", out var servers))
+        {
+            return (args, notes);
+        }
+        foreach (var server in servers.EnumerateObject())
+        {
+            var entry = new Dictionary<string, object?>();
+            if (server.Value.TryGetProperty("url", out var url) && url.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                entry["url"] = url.GetString();
+            }
+            else
+            {
+                entry["command"] = server.Value.TryGetProperty("command", out var command) ? command.GetString() : null;
+                entry["args"] = server.Value.TryGetProperty("args", out var a) ? a.EnumerateArray().Select(x => x.GetString()).ToArray() : Array.Empty<string?>();
+            }
+            if (server.Value.TryGetProperty("env", out var env) && env.ValueKind == System.Text.Json.JsonValueKind.Object && env.EnumerateObject().Any())
+            {
+                notes.Add($"MCP server '{server.Name}': its env is not passed to muse (muse only accepts ${{VAR}} references there).");
+            }
+            args.Add("-c");
+            args.Add($"mcpServers.{server.Name}=" + System.Text.Json.JsonSerializer.Serialize(entry));
+        }
+        return (args, notes);
+    }
+
+    /// <summary>The binary the muse.cmd shim starts (<c>muse-bin-&lt;version&gt;.exe</c> beside it, version in <c>.muse-version</c>), or null when it is not where expected.</summary>
+    private static string? FindRealBinary(string shim)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(shim);
+            var versionFile = dir is null ? null : Path.Combine(dir, ".muse-version");
+            if (dir is null || versionFile is null || !File.Exists(versionFile))
+            {
+                return null;
+            }
+            var binary = Path.Combine(dir, $"muse-bin-{File.ReadAllText(versionFile).Trim()}.exe");
+            return File.Exists(binary) ? binary : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     public async Task<AgentResult> RunAsync(AgentRequest request, EmitEvent emit, CancellationToken ct)
     {
         var resolved = CliProcess.Resolve(options.Path);
@@ -58,12 +113,37 @@ public sealed class MuseAgent(MuseOptions options) : IAgent
             {
                 args.Add("--trust-workspace");
             }
+
+            // MCP servers for this stage: `-c mcpServers.<name>=<json>` per server. The JSON has double quotes, which the Windows batch shim
+            // mangles, so when MCP is wanted the real binary next to the shim is started directly (arguments are then passed exactly).
+            var executable = options.Path;
+            if (!string.IsNullOrWhiteSpace(request.McpConfigFile))
+            {
+                var (mcpArgs, notes) = BuildMcpArgs(request.McpConfigFile);
+                foreach (var note in notes)
+                {
+                    emit(EventTypes.Warning, note);
+                }
+                if (mcpArgs.Count > 0)
+                {
+                    var direct = CliProcess.IsBatchFile(resolved) ? FindRealBinary(resolved) : resolved;
+                    if (direct is null)
+                    {
+                        emit(EventTypes.Warning, "MCP servers were not passed to muse: the real muse binary was not found next to the muse.cmd shim (the shim cannot pass JSON). Muse runs without them.");
+                    }
+                    else
+                    {
+                        executable = direct;
+                        args.AddRange(mcpArgs);
+                    }
+                }
+            }
             args.AddRange(options.ExtraArgs);
 
             var parser = new MuseStreamParser();
             var diagnostics = new StringBuilder();
             var (exitCode, timedOut) = await CliProcess.RunAsync(
-                options.Path,
+                executable,
                 args,
                 request.WorkDir,
                 "",

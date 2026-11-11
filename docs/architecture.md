@@ -173,7 +173,13 @@ and an Integrate stage with no server listed are profile errors). When the secti
 `StageContext.McpFor(stage)`: for the `claude` agent it writes `runs/<id>/mcp-<stage>.json` (`{ "mcpServers": { ... } }` with only that stage's
 servers) and returns the tool patterns `mcp__<server>__*`. The stage passes them as `AgentRequest.McpConfigFile` and adds the patterns to
 the allowed tools; `ClaudeAgent` then adds `--mcp-config <file> --strict-mcp-config`, so even the project's `.mcp.json` is ignored and a
-stage with no servers sees none. Other agents get a `Warning` event naming the servers they run without. Spec keeps its read-only tools
+stage with no servers sees none. **Muse** (verified against muse 1.4.14 with Spark, through a real Spec run) gets the same config as one `-c mcpServers.<name>=<json>`
+per server, in Muse's own shape (`{command,args}` for stdio, `{url}` for http; it refuses unknown keys such as `type`, and `env` values
+must be `${VAR}` references, so a server's env is skipped with a note). The JSON contains double quotes, which the `muse.cmd` shim
+(`cmd` to Windows PowerShell to the binary) mangles, so `MuseAgent` starts `muse-bin-<version>.exe` from the shim's folder directly
+(`.muse-version` names the version; not found means Muse runs without the servers, with a warning). Muse has no tool allow-list, so the
+patterns are empty and it sees every tool of each listed server; it lists MCP tools behind its own `tool_search`. Other agents get a
+`Warning` event naming the servers they run without. Spec keeps its read-only tools
 plus the MCP patterns (so list only read-only servers there; MoonWalk still verifies afterwards that no file changed). Verified with
 Claude Haiku against a stdio server: allowed gives the real answer, a stage with none listed cannot reach it, and both leave no denials.
 

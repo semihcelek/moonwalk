@@ -128,7 +128,7 @@ Verify, Handover; gates, retry, pause, guidance, recovery of interrupted runs; g
 and budgets; Changes tab, images, board filters, archive and delete, grouped feed, browser notifications; auto modes; batches (queue and
 compare); brief templates; branch cleanup; review branch; the delegation guide; Unity `.meta` commit before Handover (`UnityMeta`, tested with a fake agent only, not against a real Editor).
 Continue a finished run on its own branch (`RunEngine.ReopenAsync`, `POST /api/runs/{id}/reopen`): same run, new round, tested with a fake agent.
-Per-stage MCP servers for the claude agent (`mcp` in the profile, `StageContext.McpFor`, tested with Haiku); `guards.integrateAllowPaths` for scenes/prefabs in Integrate only. Launch Break now has core3mcp for Spec/Implement and a Verify stage (`core3mcp compile`); Muse cannot be given MCP servers yet (spike how: `muse exec -c mcpServers=...`).
+Per-stage MCP servers for the claude agent (`mcp` in the profile, `StageContext.McpFor`, tested with Haiku); `guards.integrateAllowPaths` for scenes/prefabs in Integrate only. Launch Break now has core3mcp for Spec/Implement and a Verify stage (`core3mcp compile`); Muse gets the same servers as `-c mcpServers.<name>=json` through the real `muse-bin-*.exe` (the .cmd shim mangles JSON); tested with Spark.
 
 Left, in rough order (see "Not built yet" in `docs/architecture.md`):
 1. **Unity compile check** for Verify: spike whether MoonWalk can call unity-mcp over HTTP (`http://127.0.0.1:8080/mcp`: refresh, wait for

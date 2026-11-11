@@ -127,8 +127,8 @@ public sealed class StageContext
 
     /// <summary>
     /// The MCP servers this stage's agent may use: a config file MoonWalk writes into the run folder and the Claude tool patterns that allow
-    /// exactly those servers. Null when the project configures no MCP (nothing changes), or when the agent is not Claude (it cannot be given
-    /// per-stage servers, so a warning says the stage runs without them).
+    /// exactly those servers (Muse has no tool allow-list: it is handed the same config and gets just the listed servers, so its patterns are empty).
+    /// Null when the project configures no MCP (nothing changes), or when the agent is neither Claude nor Muse (a warning says the stage runs without them).
     /// </summary>
     public McpAccess? McpFor(string stageName)
     {
@@ -137,11 +137,11 @@ public sealed class StageContext
             return null;
         }
         var names = Profile.Mcp.Stages.TryGetValue(stageName, out var listed) ? listed : [];
-        if (Agent is not { Name: "claude" })
+        if (Agent is not { Name: "claude" or "muse" })
         {
             if (names.Length > 0)
             {
-                Emit(EventTypes.Warning, $"MCP servers are configured for {stageName} ({string.Join(", ", names)}) but only the claude agent can be given them; {Agent?.Name ?? "this agent"} runs without them.");
+                Emit(EventTypes.Warning, $"MCP servers are configured for {stageName} ({string.Join(", ", names)}) but only the claude and muse agents can be given them; {Agent?.Name ?? "this agent"} runs without them.");
             }
             return null;
         }
@@ -158,7 +158,7 @@ public sealed class StageContext
         Directory.CreateDirectory(RunDir);
         File.WriteAllText(file, System.Text.Json.JsonSerializer.Serialize(new { mcpServers = servers }));
         Emit(EventTypes.System, names.Length > 0 ? $"MCP for {stageName}: {string.Join(", ", names)}." : $"MCP for {stageName}: none (only the project's configured servers are allowed, and none is listed for this stage).");
-        return new McpAccess(file, names.Select(n => $"mcp__{n}__*").ToArray());
+        return new McpAccess(file, Agent.Name == "claude" ? names.Select(n => $"mcp__{n}__*").ToArray() : []);
     }
 
     /// <summary>Prompt sections for guidance notes and the reason the previous attempt failed.</summary>

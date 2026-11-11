@@ -116,7 +116,10 @@ A profile can say which MCP servers each agent stage may use (`mcp` in `projects
 `command` and `args`, or an http `url`) and `stages` lists, for `Spec`, `Implement` and `Integrate`, the server names that stage gets.
 For the **claude** agent MoonWalk writes a config file with just those servers into the run folder, starts Claude with
 `--strict-mcp-config` (so the project's own `.mcp.json` and your other servers stay out) and allows exactly `mcp__<name>__*`. A stage
-with nothing listed gets no MCP at all. Muse, agy and generic agents cannot be given servers per stage: a stage that lists some runs
+with nothing listed gets no MCP at all. **Muse** gets the same servers as `-c mcpServers.<name>=...` settings. Muse has no tool
+allow-list (it sees every tool of a listed server), accepts no `env` on a server (a note says it is not passed), and needs its real
+`muse-bin-*.exe` started directly because the `muse.cmd` shim mangles JSON arguments; MoonWalk finds it next to the shim, and if it is
+not there Muse runs without the servers and says so. agy and generic agents cannot be given servers: a stage that lists some runs
 without them and says so in a warning. Without an `mcp` section nothing changes (and the Integrate stage allows the unity-mcp server
 under either common name, `unity-mcp` or `unityMCP`).
 
