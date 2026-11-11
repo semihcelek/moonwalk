@@ -28,6 +28,38 @@ function put(el, ...children) {
   el.replaceChildren(...children.flat().filter((c) => c != null && c !== false));
 }
 
+function fmtTokens(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k`;
+  return String(n);
+}
+
+const fmtUsd = (n) => (n >= 1 ? `$${n.toFixed(2)}` : `$${n.toFixed(3)}`);
+
+/** Sums a run's usage ledger, optionally for one stage. */
+function totals(run, stage) {
+  const entries = (run.usage ?? []).filter((u) => !stage || u.stage === stage);
+  return {
+    tokens: entries.reduce((a, u) => a + (u.tokens ?? 0), 0),
+    cost: entries.reduce((a, u) => a + (u.costUsd ?? 0), 0),
+    hasCost: entries.some((u) => u.costUsd != null),
+    models: [...new Set(entries.map((u) => (u.model ?? u.agent).replace(/^claude-/, '')))],
+    attempts: entries.length,
+  };
+}
+
+/** One muted line under a stage: tokens, dollars (only where the agent reports them) and the model(s) used. */
+function usageLine(run, stage) {
+  const t = totals(run, stage);
+  if (!t.attempts) return null;
+  const parts = [];
+  if (t.tokens) parts.push(`${fmtTokens(t.tokens)} tokens`);
+  if (t.hasCost) parts.push(fmtUsd(t.cost));
+  parts.push(t.models.join(', '));
+  if (t.attempts > 1) parts.push(`${t.attempts} attempts`);
+  return h('div', { class: 'usage' }, parts.join(' · '));
+}
+
 const STATUS_LABEL = {
   Queued: 'Queued', Running: 'Running', WaitingForHuman: 'Needs you', Paused: 'Paused',
   Done: 'Done', Failed: 'Failed', Cancelled: 'Cancelled', Interrupted: 'Interrupted',
@@ -192,7 +224,8 @@ window.addEventListener('hashchange', route);
 async function showBoard() {
   const list = h('div', { class: 'runs' });
   const sub = h('span', { class: 'sub' });
-  view.replaceChildren(h('div', { class: 'page-head' }, h('h1', {}, 'Runs'), sub), list);
+  const strip = h('div', { class: 'usage-strip' });
+  view.replaceChildren(h('div', { class: 'page-head' }, h('h1', {}, 'Runs'), sub), strip, list);
 
   const render = () => {
     const all = [...runs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -215,7 +248,26 @@ async function showBoard() {
     return;
   }
   render();
-  onRunsChanged = render;
+  loadUsage(strip, true);
+  onRunsChanged = () => { render(); loadUsage(strip); };
+}
+
+let usageStamp = 0;
+
+/** Tokens and dollars used today and over the last 7 days, and by agent and model. Re-read at most every few seconds. */
+async function loadUsage(strip, force = false) {
+  if (!force && Date.now() - usageStamp < 4000) return;
+  usageStamp = Date.now();
+  try {
+    const u = await api('/api/usage?days=7');
+    const chip = (label, tokens, cost) => h('span', { class: 'usage-chip' }, h('b', {}, label), ' ',
+      [tokens ? `${fmtTokens(tokens)} tokens` : null, cost ? fmtUsd(cost) : null].filter(Boolean).join(' · ') || 'nothing yet');
+    if (!u.totalTokens && !u.totalCostUsd) { strip.replaceChildren(); return; }
+    put(strip,
+      chip('Today', u.today.tokens, u.today.costUsd),
+      chip('7 days', u.totalTokens, u.totalCostUsd),
+      u.byAgent.slice(0, 5).map((a) => chip((a.model || a.agent).replace(/^claude-/, ''), a.tokens, a.costUsd)));
+  } catch { /* the strip is optional */ }
 }
 
 function runRow(run) {
@@ -357,7 +409,7 @@ async function showRun(id) {
     const retryFrom = h('select', {}, r.stages.map((s) => h('option', { value: s.name, selected: s.name === retryDefault }, s.name)));
     const agent = h('select', {}, agentNames.map((a) => h('option', { value: a, selected: a === r.agent }, a)));
     const decide = (action, extra = {}) => attempt(() => post(`/api/runs/${encodeURIComponent(id)}/decision`, { action, note: note.value.trim() || null, ...extra }));
-    const attention = { Gate: 'Review needed', Review: 'Your turn', Failed: 'Stage failed', Blocked: 'Stage blocked' }[w.reason] ?? 'Needs you';
+    const attention = { Gate: 'Review needed', Review: 'Your turn', Failed: 'Stage failed', Blocked: 'Stage blocked', Budget: 'Budget reached' }[w.reason] ?? 'Needs you';
 
     decisionBox.replaceChildren(h('div', { class: `decision r-${w.reason.toLowerCase()}` },
       h('div', { class: 'decision-head' }, h('b', {}, attention), h('span', { class: 'muted' }, ` · ${w.stage}`)),
@@ -394,6 +446,7 @@ async function showRun(id) {
       r.agent && h('span', {}, 'Agent ', h('b', {}, r.agent)),
       r.branch && h('span', {}, 'Branch ', h('b', {}, r.branch)),
       r.commit && h('span', {}, 'Commit ', h('b', {}, r.commit)),
+      totals(r).tokens > 0 && h('span', {}, 'Tokens ', h('b', {}, fmtTokens(totals(r).tokens))),
       r.costUsd != null && h('span', {}, 'Cost ', h('b', {}, `$${r.costUsd.toFixed(3)}`)),
       h('span', {}, 'Elapsed ', h('b', {}, duration(r.createdAt, isActive(r.status) ? null : r.finishedAt ?? r.updatedAt))));
     const releasable = r.workspaceHeld && !['Queued', 'Running', 'Paused', 'WaitingForHuman'].includes(r.status);
@@ -412,7 +465,8 @@ async function showRun(id) {
         h('span', { class: 'node' }),
         h('div', { class: 'name' }, h('span', {}, s.name, s.agent && h('span', { class: 'agent-tag' }, s.agent)),
           s.startedAt && h('span', { class: 'dur' }, duration(s.startedAt, s.finishedAt))),
-        s.summary && h('div', { class: 'sum' }, s.summary))));
+        s.summary && h('div', { class: 'sum' }, s.summary),
+        usageLine(r, s.name))));
     errorSlot.replaceChildren(...(r.error && r.status !== 'Done' ? [h('div', { class: 'error-box' }, r.error)] : []));
   };
   renderRun(run);
@@ -568,6 +622,60 @@ function renderStageAgents(project) {
   }
 }
 
+/* Presets: built-in and saved combinations of the per-stage choices above. */
+const presetSelect = document.getElementById('presetSelect');
+const presetDelete = document.getElementById('presetDelete');
+let presets = { builtin: [], custom: [] };
+
+async function loadPresets() {
+  try { presets = await api('/api/presets'); } catch { presets = { builtin: [], custom: [] }; }
+  const opt = (p) => h('option', { value: p.name }, p.name);
+  put(presetSelect,
+    h('option', { value: '' }, 'Preset…'),
+    presets.builtin.length && h('optgroup', { label: 'Built in' }, presets.builtin.map(opt)),
+    presets.custom.length && h('optgroup', { label: 'Saved' }, presets.custom.map(opt)));
+  presetDelete.hidden = true;
+}
+
+function applyPreset(preset) {
+  for (const [stage, choice] of Object.entries(preset.stages ?? {})) {
+    const refs = stageSelects[stage];
+    if (!refs) continue; // the project has no such stage
+    refs.agent.value = choice.agent ?? '';
+    if (refs.agent.value !== (choice.agent ?? '')) continue; // that agent is not installed here
+    refs.model.value = '';
+    refreshStageRow(refs, refs.agent.value);
+    refs.model.value = choice.model ?? '';
+    refreshStageRow(refs, refs.agent.value);
+    refs.effort.value = choice.effort ?? '';
+  }
+}
+
+presetSelect.addEventListener('change', () => {
+  const all = [...presets.builtin, ...presets.custom];
+  const preset = all.find((p) => p.name === presetSelect.value);
+  presetDelete.hidden = !presets.custom.some((p) => p.name === presetSelect.value);
+  if (preset) applyPreset(preset);
+});
+
+document.getElementById('presetSave').addEventListener('click', () => attempt(async () => {
+  const stages = collectStageChoices();
+  if (!Object.keys(stages).length) { alert('Choose an agent, model or effort for at least one stage first.'); return; }
+  const name = prompt('Name for this preset');
+  if (!name?.trim()) return;
+  await post('/api/presets', { name: name.trim(), stages });
+  await loadPresets();
+  presetSelect.value = name.trim();
+  presetDelete.hidden = false;
+}));
+
+presetDelete.addEventListener('click', () => attempt(async () => {
+  const name = presetSelect.value;
+  if (!name || !confirm(`Delete the saved preset "${name}"?`)) return;
+  await api(`/api/presets/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  await loadPresets();
+}));
+
 function collectStageChoices() {
   const out = {};
   for (const [stage, refs] of Object.entries(stageSelects)) {
@@ -589,6 +697,7 @@ function showProjectNote(projects) {
 
 document.getElementById('newRunBtn').addEventListener('click', async () => {
   try { await loadProjects(); } catch { /* keep whatever is listed */ }
+  await loadPresets();
   dialog.showModal();
   briefInput.focus();
 });

@@ -47,6 +47,18 @@ public sealed class WaitState
     public bool CanApprove { get; set; }
 }
 
+/// <summary>What one agent attempt of one stage used. Dollars only where the agent reports them (Claude); tokens where it reports those.</summary>
+public sealed class UsageEntry
+{
+    public DateTimeOffset Time { get; set; } = DateTimeOffset.Now;
+    public string Stage { get; set; } = "";
+    public int Attempt { get; set; } = 1;
+    public string Agent { get; set; } = "";
+    public string? Model { get; set; }
+    public long? Tokens { get; set; }
+    public double? CostUsd { get; set; }
+}
+
 public sealed class GuidanceNote
 {
     public DateTimeOffset Time { get; set; } = DateTimeOffset.Now;
@@ -85,6 +97,9 @@ public sealed class Run
 
     public WaitState? Waiting { get; set; }
     public bool PauseRequested { get; set; }
+
+    /// <summary>One entry per agent attempt of a stage; <see cref="CostUsd"/> is their sum.</summary>
+    public List<UsageEntry> Usage { get; set; } = new();
     public List<GuidanceNote> Guidance { get; set; } = new();
 
     /// <summary>Files under runs/&lt;id&gt;/ the UI may show (spec.md, evidence/verify.log, handover.md).</summary>

@@ -98,6 +98,9 @@ public sealed class MuseOptions
     /// <summary>Load the workspace's own Muse skills and rules (<c>--trust-workspace</c>). Off by default.</summary>
     public bool TrustWorkspace { get; set; }
 
+    /// <summary>Caps the model steps of one Muse run (<c>--max-model-steps</c>). Muse has no token or dollar cap.</summary>
+    public int? MaxSteps { get; set; }
+
     public string[] ExtraArgs { get; set; } = [];
 }
 
@@ -110,6 +113,18 @@ public sealed class VerifyStep
     public string[] Args { get; set; } = [];
 
     public int TimeoutMinutes { get; set; } = 15;
+}
+
+/// <summary>
+/// Spending limits for one run. Checked between agent stages: when a limit is passed the run waits for you (continue anyway, retry, or
+/// stop). Claude is additionally given the remaining dollars as <c>--max-budget-usd</c>, so a single stage cannot overshoot; Muse and agy
+/// have no equivalent, so a single stage of theirs can still pass a limit before the check.
+/// </summary>
+public sealed class BudgetLimits
+{
+    public double? MaxCostUsd { get; set; }
+
+    public long? MaxTokens { get; set; }
 }
 
 public sealed class ProjectProfile
@@ -148,6 +163,8 @@ public sealed class ProjectProfile
     public ClaudeOptions Claude { get; set; } = new();
 
     public AgyOptions Agy { get; set; } = new();
+
+    public BudgetLimits Budget { get; set; } = new();
 
     public MuseOptions Muse { get; set; } = new();
 

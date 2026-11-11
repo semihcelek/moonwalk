@@ -82,7 +82,7 @@ public sealed class AgyAgent(AgyOptions options) : IAgent
                 ct);
 
             var r = parser.Result;
-            return new AgentResult(exitCode, timedOut, r.Text, null, r.IsError, r.NumTurns, r.SessionId, r.Usage, diagnostics.ToString().Trim());
+            return new AgentResult(exitCode, timedOut, r.Text, null, r.IsError, r.NumTurns, r.SessionId, r.Usage, diagnostics.ToString().Trim(), r.Tokens, options.Model);
         }
         finally
         {

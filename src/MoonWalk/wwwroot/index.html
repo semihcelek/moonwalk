@@ -38,6 +38,11 @@
       </label>
       <fieldset class="field stage-agents" id="stageAgents" hidden>
         <legend>Agent per stage</legend>
+        <div class="preset-row">
+          <select id="presetSelect" aria-label="Preset"></select>
+          <button class="btn small" type="button" id="presetSave" title="Save the current choices as a preset">Save as preset</button>
+          <button class="btn small danger" type="button" id="presetDelete" title="Delete the selected saved preset" hidden>Delete</button>
+        </div>
         <div id="stageAgentRows"></div>
         <small class="hint">Blank means the project's default. Plan with a strong model, implement with a cheaper one.</small>
       </fieldset>

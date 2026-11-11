@@ -98,6 +98,24 @@ model and effort too. The Integrate stage needs the Unity Editor open with unity
 `mcp__unityMCP__*` tools, and agy and Muse need unity-mcp in their own configuration. Add `"Integrate"` to the profile's `stages`
 (after `Implement`) to use it.
 
+### Presets
+
+The *Agent per stage* section has a **Preset** dropdown. Built in: Claude Opus plans and Sonnet implements, Claude Sonnet plans and
+Haiku implements, Muse Wonder or Spark plans and Ember implements, Gemini Argon plans and Flash implements. **Save as preset** stores
+the current choices under your own name (kept in `presets.json`, git-ignored); a preset only fills the stages the chosen project has.
+
+### What a run costs
+
+Every agent attempt adds a line to the run's usage ledger: tokens, the model it actually used, and dollars **where the agent reports
+them** (only Claude does; agy and Muse report tokens). The run page shows totals plus a line under each stage, and the board shows
+today, the last 7 days, and the split by model. MoonWalk does not guess prices for agents that do not report them.
+
+A project can set a budget in its profile: `"budget": { "maxCostUsd": 0.50, "maxTokens": 2000000 }`. After each agent stage, if a
+limit has been passed the run waits (**Budget reached**): approve to continue anyway (it then stops asking), retry, or stop. Claude is
+also given the remaining dollars as `--max-budget-usd`, so a single Claude stage stops itself, though the CLI checks between turns and
+can overshoot by one turn. Muse has `muse.maxSteps` (a step cap) and agy only a time limit, so one stage of theirs can pass a limit
+before the check.
+
 ### Branch or worktree
 
 | | `branch` (default) | `worktree` |
@@ -153,5 +171,5 @@ The browser tab title shows `(n)` while runs wait for you, and those rows are hi
 3. Control surface: gates, pause/resume, retry, guidance notes, Spec, Verify and Handover stages (done)
 4. agy and generic CLI agents, agent health and Settings page, recovery of interrupted runs, worktree mode (done)
 
-Next (see the improvement plan): a Unity compile check and `.meta` auto-commit, cost and budgets per stage, run history and
+Next (see the improvement plan): a Unity compile check and `.meta` auto-commit, run history and
 notifications, a task queue and agent comparison, and a playtest stage.

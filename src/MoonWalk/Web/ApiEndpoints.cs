@@ -10,6 +10,8 @@ public sealed record NewRunRequest(string? Brief, string? Project, Dictionary<st
 
 public sealed record GuidanceRequest(string? Text);
 
+public sealed record SavePresetRequest(string? Name, Dictionary<string, AgentChoice>? Stages);
+
 public static class ApiEndpoints
 {
     private static IResult Reply((bool Ok, string Message) result) =>
@@ -58,6 +60,19 @@ public static class ApiEndpoints
             Results.Json(new { agents = agents.Names, details = agents.List(), errors = agents.Errors }, Json.Options));
 
         app.MapGet("/api/models", () => Results.Json(ModelCatalog.All, Json.Options));
+
+        app.MapGet("/api/usage", (RunStore store, int? days) => Results.Json(store.UsageSummary(Math.Clamp(days ?? 7, 1, 90)), Json.Options));
+
+        app.MapGet("/api/presets", (PresetStore presets) =>
+            Results.Json(new { builtin = PresetStore.Builtin, custom = presets.Custom() }, Json.Options));
+
+        app.MapPost("/api/presets", (SavePresetRequest request, PresetStore presets) =>
+            presets.Save(request.Name ?? "", request.Stages ?? new()) is { } problem
+                ? Results.BadRequest(new { error = problem })
+                : Results.Ok(new { saved = request.Name }));
+
+        app.MapDelete("/api/presets/{name}", (string name, PresetStore presets) =>
+            presets.Delete(name) ? Results.Ok(new { deleted = name }) : Results.NotFound());
 
         app.MapGet("/api/agents/health", async (AgentRegistry agents, CancellationToken ct) =>
             Results.Json(new { agents = await agents.CheckAllAsync(ct), errors = agents.Errors }, Json.Options));

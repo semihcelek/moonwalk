@@ -7,7 +7,13 @@ public delegate void EmitEvent(string type, string? text, Dictionary<string, obj
 /// whatever they have (tool lists for Claude, plan mode for agy). The allowed/disallowed lists, when set, replace the ones from the
 /// project profile for this request. Whether an agent honoured read-only is always verified by the stage, never trusted.
 /// </summary>
-public sealed record AgentRequest(string Prompt, string WorkDir, string[]? AllowedTools = null, string[]? DisallowedTools = null, bool ReadOnly = false);
+public sealed record AgentRequest(
+    string Prompt,
+    string WorkDir,
+    string[]? AllowedTools = null,
+    string[]? DisallowedTools = null,
+    bool ReadOnly = false,
+    double? MaxBudgetUsd = null);
 
 public sealed record AgentResult(
     int ExitCode,
@@ -18,7 +24,9 @@ public sealed record AgentResult(
     int? NumTurns,
     string? SessionId,
     string? Usage = null,
-    string? Diagnostics = null);
+    string? Diagnostics = null,
+    long? Tokens = null,
+    string? Model = null);
 
 public interface IAgent
 {

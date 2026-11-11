@@ -94,6 +94,33 @@ public sealed class RunStore
         }
     }
 
+    /// <summary>Adds up the usage ledgers of all runs over the last <paramref name="days"/> days, by day and by agent and model.</summary>
+    public object UsageSummary(int days)
+    {
+        var since = DateTimeOffset.Now.Date.AddDays(-(Math.Max(days, 1) - 1));
+        List<UsageEntry> entries;
+        lock (_lock)
+        {
+            entries = _runs.Values.SelectMany(r => r.Usage).Where(u => u.Time.LocalDateTime >= since).ToList();
+        }
+
+        return new
+        {
+            days,
+            totalCostUsd = entries.Sum(u => u.CostUsd ?? 0),
+            totalTokens = entries.Sum(u => u.Tokens ?? 0),
+            today = new
+            {
+                costUsd = entries.Where(u => u.Time.LocalDateTime.Date == DateTime.Today).Sum(u => u.CostUsd ?? 0),
+                tokens = entries.Where(u => u.Time.LocalDateTime.Date == DateTime.Today).Sum(u => u.Tokens ?? 0),
+            },
+            byDay = entries.GroupBy(u => u.Time.LocalDateTime.Date).OrderBy(g => g.Key)
+                .Select(g => new { date = g.Key.ToString("yyyy-MM-dd"), costUsd = g.Sum(u => u.CostUsd ?? 0), tokens = g.Sum(u => u.Tokens ?? 0) }).ToList(),
+            byAgent = entries.GroupBy(u => new { u.Agent, Model = u.Model ?? "" }).OrderByDescending(g => g.Sum(u => u.Tokens ?? 0))
+                .Select(g => new { agent = g.Key.Agent, model = g.Key.Model, costUsd = g.Sum(u => u.CostUsd ?? 0), tokens = g.Sum(u => u.Tokens ?? 0), attempts = g.Count() }).ToList(),
+        };
+    }
+
     public bool Exists(string id)
     {
         lock (_lock)

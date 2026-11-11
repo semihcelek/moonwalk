@@ -49,6 +49,11 @@ public sealed class MuseAgent(MuseOptions options) : IAgent
             {
                 args.Add("--disable-shell");
             }
+            if (options.MaxSteps is > 0 and var steps)
+            {
+                args.Add("--max-model-steps");
+                args.Add(steps.ToString());
+            }
             if (options.TrustWorkspace)
             {
                 args.Add("--trust-workspace");
@@ -81,7 +86,7 @@ public sealed class MuseAgent(MuseOptions options) : IAgent
                 ct);
 
             var r = parser.Result;
-            return new AgentResult(exitCode, timedOut, r.Text, null, r.IsError || (exitCode == 0 && !r.Seen), null, r.SessionId, r.Usage, diagnostics.ToString().Trim());
+            return new AgentResult(exitCode, timedOut, r.Text, null, r.IsError || (exitCode == 0 && !r.Seen), null, r.SessionId, r.Usage, diagnostics.ToString().Trim(), r.Tokens, r.Model ?? options.Model);
         }
         finally
         {

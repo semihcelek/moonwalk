@@ -24,14 +24,11 @@ public sealed class SpecStage : IStage
         context.Emit(EventTypes.System, $"Running {agent.Name} read-only to write the spec.");
 
         var result = await agent.RunAsync(
-            new AgentRequest(BuildPrompt(context), context.WorkDir, ReadOnlyTools, NoWriteTools, ReadOnly: true),
+            new AgentRequest(BuildPrompt(context), context.WorkDir, ReadOnlyTools, NoWriteTools, ReadOnly: true, MaxBudgetUsd: context.RemainingBudgetUsd),
             context.Emit,
             ct);
 
-        if (result.CostUsd is { } cost)
-        {
-            context.AddCost(cost);
-        }
+        context.AddUsage(agent.Name, result);
         if (result.Usage is { } usage)
         {
             context.Emit(EventTypes.System, $"Agent used {usage}.");
@@ -43,7 +40,7 @@ public sealed class SpecStage : IStage
         }
         if (result.ExitCode != 0 || result.IsError)
         {
-            return StageResult.Failed($"The agent failed (exit {result.ExitCode}).");
+            return StageResult.Failed($"The agent failed (exit {result.ExitCode})." + (string.IsNullOrWhiteSpace(result.Diagnostics) ? "" : " " + result.Diagnostics.Trim()));
         }
 
         if (context.Workspace is { } workspace)

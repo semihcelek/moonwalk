@@ -5,6 +5,8 @@ namespace MoonWalk.Agents;
 
 public sealed class AgyResultInfo
 {
+    public long? Tokens { get; set; }
+
     public bool Seen { get; set; }
 
     public string? Text { get; set; }
@@ -79,6 +81,7 @@ public sealed class AgyStreamParser(string workDir)
                 }
                 if (result.TryGetProperty("usage", out var usage) && usage.TryGetProperty("total_tokens", out var total) && total.ValueKind == JsonValueKind.Number)
                 {
+                    Result.Tokens = total.GetInt64();
                     Result.Usage = $"{total.GetInt64():N0} tokens";
                 }
                 if (Result.IsError)

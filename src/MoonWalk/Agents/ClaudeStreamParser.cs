@@ -8,6 +8,14 @@ public sealed record ParsedEvent(string Type, string? Text, Dictionary<string, o
 
 public sealed class ClaudeResultInfo
 {
+    /// <summary>Input (including cache reads and writes) plus output tokens, as the CLI reports them in the final result.</summary>
+    public long? Tokens { get; set; }
+
+    public string? Model { get; set; }
+
+    /// <summary>The reasons the CLI gives for an error result (for example "Reached maximum budget ($0.003)").</summary>
+    public string? Errors { get; set; }
+
     public bool Seen { get; set; }
 
     public string? Text { get; set; }
@@ -61,6 +69,7 @@ public sealed class ClaudeStreamParser(string workDir)
             case "system" when Str(root, "subtype") == "init":
                 Result.SessionId = Str(root, "session_id");
                 var model = Str(root, "model");
+                Result.Model = model;
                 yield return new ParsedEvent(EventTypes.System, model is null ? "Agent session started." : $"Agent session started ({model}).",
                     new() { ["sessionId"] = Result.SessionId, ["model"] = model });
                 break;
@@ -94,6 +103,23 @@ public sealed class ClaudeStreamParser(string workDir)
                 if (root.TryGetProperty("total_cost_usd", out var cost) && cost.ValueKind == JsonValueKind.Number)
                 {
                     Result.CostUsd = cost.GetDouble();
+                }
+                if (root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array)
+                {
+                    var reasons = errors.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()).ToList();
+                    Result.Errors = reasons.Count > 0 ? string.Join("; ", reasons) : null;
+                }
+                if (root.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object)
+                {
+                    long sum = 0;
+                    foreach (var key in new[] { "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens" })
+                    {
+                        if (usage.TryGetProperty(key, out var count) && count.ValueKind == JsonValueKind.Number)
+                        {
+                            sum += count.GetInt64();
+                        }
+                    }
+                    Result.Tokens = sum > 0 ? sum : null;
                 }
                 if (root.TryGetProperty("num_turns", out var turns) && turns.ValueKind == JsonValueKind.Number)
                 {

@@ -278,6 +278,32 @@ feed's "Agent session started (model)" line.
 `RunStore.Save` retries the atomic replace of `run.json` a few times (25 ms steps), because on Windows an antivirus scan, the search
 indexer or an open viewer can hold the file for a moment and fail the replace with "Access to the path is denied".
 
+## Usage, budgets and presets
+
+**Usage.** Each agent parser reports tokens and the model: Claude sums `input`, `cache_creation_input`, `cache_read_input` and
+`output` tokens from the final `result` line and reads the model from `system/init`; agy takes `total_tokens`; Muse sums `run.usage`
+input and output tokens and reads the model from `run.model.configured`. Claude alone reports dollars (`total_cost_usd`). A stage calls
+`StageContext.AddUsage(agent, result)`, which appends a `UsageEntry` (stage, attempt, agent, model, tokens, dollars) to `Run.Usage` and
+adds the dollars to `Run.CostUsd`. `RunStore.UsageSummary(days)` adds the ledgers of all runs by day and by agent and model
+(`GET /api/usage?days=N`, default 7, at most 90). The UI shows run totals, a line per stage, and a strip on the board.
+`AgentResult` also carries the CLI's own error reasons as `Diagnostics` for Claude (for example "Reached maximum budget ($0.003)"), which
+the stage failure messages include.
+
+**Budgets.** `budget.maxCostUsd` and `budget.maxTokens` in the profile. The engine calls `BudgetProblem` after each stage that passed and
+has stages after it; when a limit is reached the run waits with `WaitState.Reason = "Budget"` (approvable). Approving sets a flag for the
+rest of the run so it asks once. Enforcement inside a stage is only possible where the agent has a cap: the engine gives each stage
+`RemainingBudgetUsd` (the cost limit minus the dollars spent so far, never less than $0.01, none once waived) and `ClaudeAgent` passes it
+as `--max-budget-usd`. On exceeding it the CLI exits 1 with `subtype: error_max_budget_usd`; it checks between turns, so one turn can
+overshoot (observed: a $0.07 turn against a $0.01 cap). Muse can be capped by steps (`muse.maxSteps`, `--max-model-steps`); agy has only
+`--print-timeout`.
+
+**Presets.** `PresetStore` holds five built-in presets (defined in code) and the user's saved ones in `presets.json` (written atomically,
+`MoonWalk:PresetsFile` to move it). `GET /api/presets` returns both lists, `POST /api/presets {name, stages}` saves (a built-in name is
+refused; each choice is validated against `ModelCatalog`), `DELETE /api/presets/{name}` removes a saved one. The dialog applies a preset's
+choices to the stages the project has and skips agents that are not installed.
+
+The app sets the invariant culture at startup so dollar amounts and counts in messages never use a decimal comma.
+
 ## Event types
 
 | Type | UI group | Notes |

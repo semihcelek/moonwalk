@@ -3,6 +3,10 @@ using MoonWalk.Core;
 using MoonWalk.Projects;
 using MoonWalk.Web;
 
+// Dollar amounts and token counts in messages must read the same on every machine (no decimal commas).
+System.Globalization.CultureInfo.DefaultThreadCurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+
 var builder = WebApplication.CreateBuilder(args);
 
 if (string.IsNullOrEmpty(builder.Configuration["urls"]))
@@ -27,6 +31,7 @@ var registry = new ProjectRegistry(projectsDir, agents);
 registry.Reload();
 
 builder.Services.AddSingleton(paths);
+builder.Services.AddSingleton(new PresetStore(paths.PresetsFile));
 builder.Services.AddSingleton(agents);
 builder.Services.AddSingleton(registry);
 builder.Services.AddSingleton(new EventHub(runsRoot));

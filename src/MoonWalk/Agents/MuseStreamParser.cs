@@ -5,6 +5,10 @@ namespace MoonWalk.Agents;
 
 public sealed class MuseResultInfo
 {
+    public long? Tokens { get; set; }
+
+    public string? Model { get; set; }
+
     public bool Seen { get; set; }
 
     public string? Text { get; set; }
@@ -59,6 +63,7 @@ public sealed class MuseStreamParser
                 yield return new ParsedEvent(EventTypes.System, model is null ? "Agent session started." : $"Agent session started ({model}).",
                     new() { ["model"] = model, ["runId"] = Str(payload, "command_id") });
                 Result.SessionId = Str(payload, "command_id");
+                Result.Model = model;
                 break;
 
             case "task.lifecycle.proposed" when payload.TryGetProperty("event", out var evt) && Str(evt, "task_kind") is { } kind && kind.StartsWith("tool."):
@@ -78,7 +83,9 @@ public sealed class MuseStreamParser
                 break;
 
             case "run.usage":
-                Result.Usage = Usage(payload);
+                var tokens = TotalTokens(payload);
+                Result.Tokens = tokens > 0 ? tokens : null;
+                Result.Usage = tokens > 0 ? $"{tokens:N0} tokens" : null;
                 break;
 
             case var t when t.StartsWith("run.terminal."):
@@ -130,11 +137,11 @@ public sealed class MuseStreamParser
             new() { ["tool"] = tool, ["isError"] = !success, ["preview"] = body.Length > 600 ? body[..600] + "..." : body });
     }
 
-    private static string? Usage(JsonElement payload)
+    private static long TotalTokens(JsonElement payload)
     {
         if (!payload.TryGetProperty("models", out var models) || models.ValueKind != JsonValueKind.Array)
         {
-            return null;
+            return 0;
         }
 
         long total = 0;
@@ -148,7 +155,7 @@ public sealed class MuseStreamParser
                 }
             }
         }
-        return total > 0 ? $"{total:N0} tokens" : null;
+        return total;
     }
 
     private static string? Str(JsonElement element, string name) =>

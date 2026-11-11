@@ -412,6 +412,7 @@ public sealed class RunEngine
 
             var attempts = new Dictionary<string, int>();
             string? previousFailure = null;
+            var budgetWaived = false;
             var agentName = profile.Agent;
             var index = 0;
             WaitState? pendingWait = null;
@@ -495,6 +496,7 @@ public sealed class RunEngine
                             Attempt = attempts[stage.Name],
                             Guidance = _store.Get(id)!.Guidance.Select(g => g.Text).ToList(),
                             PreviousFailure = previousFailure,
+                            RemainingBudgetUsd = budgetWaived ? null : RemainingBudgetUsd(id, profile),
                         };
                         result = await stage.RunAsync(context, ct);
                     }
@@ -525,6 +527,11 @@ public sealed class RunEngine
                                 Message = $"{stage.Name} finished. Review it, then approve to continue, or redo it with a note.",
                                 CanApprove = true,
                             };
+                            break;
+                        case StageOutcome.Passed when !budgetWaived && index + 1 < stages.Count && BudgetProblem(id, profile) is { } overBudget:
+                            // A limit was passed: ask before spending more. Approve continues (and stops asking), retry or stop as usual.
+                            previousFailure = null;
+                            wait = new WaitState { Stage = stage.Name, Reason = "Budget", Message = overBudget + " Approve to continue anyway, or stop the run.", CanApprove = true };
                             break;
                         case StageOutcome.Passed:
                             previousFailure = null;
@@ -569,8 +576,12 @@ public sealed class RunEngine
 
                 if (decision.Action == "approve")
                 {
-                    _hub.Append(id, EventTypes.Decision, stage.Name, $"Approved {stage.Name}.");
+                    _hub.Append(id, EventTypes.Decision, stage.Name, wait.Reason == "Budget" ? "Continuing past the budget." : $"Approved {stage.Name}.");
                     previousFailure = null;
+                    if (wait.Reason == "Budget")
+                    {
+                        budgetWaived = true;
+                    }
                     _store.Update(id, r =>
                     {
                         var record = r.Stages.First(s => s.Name == stage.Name);
@@ -650,6 +661,40 @@ public sealed class RunEngine
         Finish(id, status, error);
         _controls.TryRemove(id, out _);
         control.Cts.Dispose();
+    }
+
+    /// <summary>Dollars left under the project's cost limit, for agents that can enforce a per-run cap (Claude). Null when there is no limit.</summary>
+    private double? RemainingBudgetUsd(string id, ProjectProfile profile)
+    {
+        if (profile.Budget.MaxCostUsd is not { } max || max <= 0)
+        {
+            return null;
+        }
+        var spent = _store.Get(id)?.Usage.Sum(u => u.CostUsd ?? 0) ?? 0;
+        return Math.Max(max - spent, 0.01);
+    }
+
+    private static string Usd(double amount) => amount >= 1 ? amount.ToString("0.00") : amount.ToString("0.0000").TrimEnd('0').PadRight(6, '0');
+
+    /// <summary>Returns what was exceeded when the run has used up a limit of the project's budget, or null.</summary>
+    private string? BudgetProblem(string id, ProjectProfile profile)
+    {
+        var usage = _store.Get(id)?.Usage;
+        if (usage is null || usage.Count == 0)
+        {
+            return null;
+        }
+        var spent = usage.Sum(u => u.CostUsd ?? 0);
+        var tokens = usage.Sum(u => u.Tokens ?? 0);
+        if (profile.Budget.MaxCostUsd is > 0 and var maxCost && spent >= maxCost)
+        {
+            return $"The run has spent ${Usd(spent)} of its ${Usd(maxCost)} budget.";
+        }
+        if (profile.Budget.MaxTokens is > 0 and var maxTokens && tokens >= maxTokens)
+        {
+            return $"The run has used {tokens:N0} of its {maxTokens:N0} token budget.";
+        }
+        return null;
     }
 
     /// <summary>Where a recovered run continues: the question it was asked, or the first stage that had not passed.</summary>

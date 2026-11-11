@@ -6,3 +6,4 @@ obj/
 runs/
 *.local.json
 agents.json
+presets.json

@@ -23,12 +23,9 @@ public sealed class ImplementStage : IStage
         context.Emit(EventTypes.System, $"Running {agent.Name} in {context.WorkDir}.");
 
         var headBefore = await workspace.Workspace.GetHeadAsync(workspace.State, ct);
-        var result = await agent.RunAsync(new AgentRequest(BuildPrompt(context), context.WorkDir), context.Emit, ct);
+        var result = await agent.RunAsync(new AgentRequest(BuildPrompt(context), context.WorkDir, MaxBudgetUsd: context.RemainingBudgetUsd), context.Emit, ct);
 
-        if (result.CostUsd is { } cost)
-        {
-            context.AddCost(cost);
-        }
+        context.AddUsage(agent.Name, result);
         context.Emit(EventTypes.System,
             $"Agent finished: exit {result.ExitCode}" + (result.NumTurns is { } turns ? $", {turns} turns" : "")
             + (result.CostUsd is { } c ? $", ${c:0.000}" : "") + (result.Usage is { } usage ? $", {usage}" : "") + ".",

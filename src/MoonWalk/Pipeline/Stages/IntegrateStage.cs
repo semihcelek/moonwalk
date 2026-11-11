@@ -26,12 +26,9 @@ public sealed class IntegrateStage : IStage
 
         var allowed = context.Profile.Claude.AllowedTools.Concat(UnityTools).ToArray();
         var headBefore = await workspace.Workspace.GetHeadAsync(workspace.State, ct);
-        var result = await agent.RunAsync(new AgentRequest(BuildPrompt(context), context.WorkDir, allowed), context.Emit, ct);
+        var result = await agent.RunAsync(new AgentRequest(BuildPrompt(context), context.WorkDir, allowed, MaxBudgetUsd: context.RemainingBudgetUsd), context.Emit, ct);
 
-        if (result.CostUsd is { } cost)
-        {
-            context.AddCost(cost);
-        }
+        context.AddUsage(agent.Name, result);
         if (result.Usage is { } usage)
         {
             context.Emit(EventTypes.System, $"Agent used {usage}.");

@@ -27,6 +27,11 @@ public sealed class ClaudeAgent(ClaudeOptions options) : IAgent
             args.Add("--effort");
             args.Add(options.Effort);
         }
+        if (request.MaxBudgetUsd is > 0 and var budget)
+        {
+            args.Add("--max-budget-usd");
+            args.Add(budget.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture));
+        }
         var allowed = request.AllowedTools ?? options.AllowedTools;
         var disallowed = request.DisallowedTools ?? options.DisallowedTools;
         if (allowed.Length > 0)
@@ -59,6 +64,7 @@ public sealed class ClaudeAgent(ClaudeOptions options) : IAgent
             ct);
 
         var r = parser.Result;
-        return new AgentResult(exitCode, timedOut, r.Text, r.CostUsd, r.IsError, r.NumTurns, r.SessionId);
+        return new AgentResult(exitCode, timedOut, r.Text, r.CostUsd, r.IsError, r.NumTurns, r.SessionId,
+            Usage: r.Tokens is { } tokens ? $"{tokens:N0} tokens" : null, Diagnostics: r.Errors, Tokens: r.Tokens, Model: r.Model ?? options.Model);
     }
 }

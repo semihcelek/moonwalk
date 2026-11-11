@@ -67,6 +67,34 @@ public sealed class StageContext
 
     public void AddCost(double usd) => UpdateRun(r => r.CostUsd = (r.CostUsd ?? 0) + usd);
 
+    /// <summary>Dollars left in the run's budget before this stage started, or null when the project sets no dollar limit. Passed to agents that can enforce it.</summary>
+    public double? RemainingBudgetUsd { get; init; }
+
+    /// <summary>Records what an agent attempt used: one entry in the run's usage ledger, and the dollars added to the run's cost.</summary>
+    public void AddUsage(string agentName, AgentResult result)
+    {
+        if (result.Tokens is null && result.CostUsd is null)
+        {
+            return;
+        }
+        UpdateRun(r =>
+        {
+            r.Usage.Add(new UsageEntry
+            {
+                Stage = StageName,
+                Attempt = Attempt,
+                Agent = agentName,
+                Model = result.Model,
+                Tokens = result.Tokens,
+                CostUsd = result.CostUsd,
+            });
+            if (result.CostUsd is { } usd)
+            {
+                r.CostUsd = (r.CostUsd ?? 0) + usd;
+            }
+        });
+    }
+
     public void SetStageAgent(string agentName) =>
         UpdateRun(r => r.Stages.First(s => s.Name == StageName).Agent = agentName);
 
