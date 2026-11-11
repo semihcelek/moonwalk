@@ -42,14 +42,16 @@ public sealed class RunEngine
     private readonly ProjectRegistry _projects;
     private readonly AgentRegistry _agents;
     private readonly ReviewService _review;
+    private readonly FeatureStore _features;
     private readonly string _runsRoot;
     private readonly ConcurrentDictionary<string, RunControl> _controls = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _holders = new(StringComparer.OrdinalIgnoreCase);
 
-    public RunEngine(RunStore store, EventHub hub, ProjectRegistry projects, AgentRegistry agents, ReviewService review, string runsRoot)
+    public RunEngine(RunStore store, EventHub hub, ProjectRegistry projects, AgentRegistry agents, ReviewService review, FeatureStore features, string runsRoot)
     {
         _review = review;
+        _features = features;
         _store = store;
         _hub = hub;
         _projects = projects;
@@ -68,9 +70,21 @@ public sealed class RunEngine
 
     /* ------------------------------------------------------------ starting */
 
-    public Run Start(string brief, string projectName, IReadOnlyDictionary<string, AgentChoice>? choices = null, AutoMode? auto = null)
+    public Run Start(string brief, string projectName, IReadOnlyDictionary<string, AgentChoice>? choices = null, AutoMode? auto = null, string? feature = null)
     {
         var (profile, stages, stageAgents) = Prepare(projectName, choices);
+        if (!string.IsNullOrWhiteSpace(feature))
+        {
+            if (profile.IsDemo || profile.Workspace == WorkspaceMode.None)
+            {
+                throw new ArgumentException("This project has no git workspace, so it cannot use a feature branch.");
+            }
+            feature = _features.Open(profile.Name, feature).Name; // creates the feature when new; refuses a completed one
+        }
+        else
+        {
+            feature = null;
+        }
         var now = DateTimeOffset.Now;
         var run = new Run
         {
@@ -79,6 +93,7 @@ public sealed class RunEngine
             Brief = brief,
             Title = MakeTitle(brief),
             Agent = profile.IsDemo ? null : profile.Agent,
+            Feature = feature,
             StageAgents = stageAgents,
             Auto = new AutoMode
             {
@@ -90,6 +105,10 @@ public sealed class RunEngine
             Stages = stages.Select(s => new StageRecord { Name = s.Name }).ToList(),
         };
         _store.Add(run);
+        if (feature is not null)
+        {
+            _features.AddRun(profile.Name, feature, run.Id);
+        }
 
         var control = new RunControl(new CancellationTokenSource(), stages.Select(s => s.Name).ToList());
         _controls[run.Id] = control;
@@ -453,6 +472,31 @@ public sealed class RunEngine
     }
 
     /// <summary>
+    /// Ends a feature: no more runs can be added to it. Refused while one of its runs is active or still holds the workspace. The branch stays
+    /// (review it, merge it, delete it yourself). <paramref name="complete"/> false reopens it.
+    /// </summary>
+    public (bool Ok, string Message) SetFeatureComplete(string project, string name, bool complete)
+    {
+        var feature = _features.Get(project, name);
+        if (feature is null)
+        {
+            return (false, "Feature not found.");
+        }
+        if (complete)
+        {
+            var busy = feature.Runs.Select(_store.Get).FirstOrDefault(r => r is not null && (Run.IsActive(r.Status) || r.WorkspaceHeld));
+            if (busy is not null)
+            {
+                return (false, $"Run {busy.Id} of this feature is still active or holds the workspace. Finish or release it first.");
+            }
+        }
+        _features.SetStatus(project, name, complete);
+        return (true, complete
+            ? $"Feature '{feature.Name}' is complete. Its branch '{feature.Branch}' stays for review."
+            : $"Feature '{feature.Name}' is open again.");
+    }
+
+    /// <summary>
     /// Permanently removes a finished run and its folder (events, artifacts). Refused while the run is active or still holds its
     /// workspace. The run's git branch is not touched.
     /// </summary>
@@ -586,7 +630,8 @@ public sealed class RunEngine
                 if (state is null)
                 {
                     _hub.Append(id, EventTypes.System, null, "Preparing workspace.");
-                    state = await workspace.PrepareAsync(id, _store.Get(id)!.Title, msg => _hub.Append(id, EventTypes.System, null, msg), ct);
+                    var featureBranch = _store.Get(id)!.Feature is { } featureName ? FeatureStore.BranchFor(featureName) : null;
+                    state = await workspace.PrepareAsync(id, _store.Get(id)!.Title, msg => _hub.Append(id, EventTypes.System, null, msg), ct, featureBranch);
                     Directory.CreateDirectory(runDir);
                     state.Save(runDir);
                 }

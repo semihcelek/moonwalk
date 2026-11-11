@@ -751,6 +751,24 @@ let usageStamp = 0;
 const cleanTitle = (t) => String(t ?? '').replace(/^\s*(goal|task|brief)\s*:\s*/i, '');
 
 /** The "2/5" part of a batch label like "2/5 Goal: ...". */
+/** Complete / reopen button for a run's feature. It learns the feature's state from the server after it is drawn. */
+function featureButton(r) {
+  const btn = h('button', { class: 'btn small', type: 'button', hidden: true });
+  api('/api/features?project=' + encodeURIComponent(r.project)).then((list) => {
+    const f = list.find((x) => x.name === r.feature);
+    if (!f) return;
+    btn.textContent = f.isOpen ? 'Complete feature' : 'Reopen feature';
+    btn.title = f.isOpen ? 'No more runs can be added to this feature. Its branch stays for review.' : 'Allow more runs on this feature again.';
+    btn.hidden = false;
+    btn.onclick = () => attempt(async () => {
+      const res = await post(`/api/features/${encodeURIComponent(r.project)}/${encodeURIComponent(r.feature)}/${f.isOpen ? 'complete' : 'reopen'}`);
+      alert(res.message);
+      btn.hidden = true;
+    });
+  }).catch(() => {});
+  return btn;
+}
+
 const batchNum = (run) => /^(\d+\/\d+)/.exec(run.batchLabel ?? '')?.[1] ?? '';
 
 /** Minimal markdown for agent text as DOM nodes (never innerHTML): headings, bullets, **bold** and `code`. */
@@ -1116,6 +1134,8 @@ async function showRun(id) {
         r.auto.plan && r.auto.implementation ? 'full auto' : r.auto.plan ? 'auto plan' : 'auto implementation'),
       r.rounds > 1 && h('span', { title: 'Continued on the same branch with fix instructions' }, 'Round ', h('b', {}, String(r.rounds))),
       verifyBadge(r),
+      r.feature && h('span', { class: 'review-tag', title: 'This run builds on the shared branch of this feature' }, `feature ${r.feature}`),
+      r.feature && featureButton(r),
       r.branch && h('span', { class: 'fact-branch', title: r.branch }, 'Branch ', h('b', {}, r.branch)),
       r.commit && h('span', {}, 'Commit ', h('b', {}, r.commit)),
       (totals(r).tokens > 0 || r.costUsd != null) && h('span', {}, 'Spent ', h('b', {},
@@ -1447,6 +1467,11 @@ const compareList = document.getElementById('compareList');
 const stopFailBox = document.getElementById('stopFailBox');
 const stopOnFailure = document.getElementById('stopOnFailure');
 const submitBtn = document.getElementById('newRunSubmit');
+const featureBox = document.getElementById('featureBox');
+const featureSelect = document.getElementById('featureSelect');
+const featureName = document.getElementById('featureName');
+const featureHint = document.getElementById('featureHint');
+let openFeatures = [];
 let runMode = 'single';
 let currentProjects = [];
 
@@ -1463,7 +1488,54 @@ function applyMode() {
     : 'Describe the feature or fix. The spec stage turns this into acceptance criteria.';
   submitBtn.textContent = { single: 'Start run', queue: 'Start queue', compare: 'Start comparison' }[runMode];
   if (runMode === 'compare') renderCompareList();
+  renderFeatureChoice();
   updateTitlePreview();
+}
+
+/* Which branch the run(s) build on: their own, or a feature's shared branch (so a follow-up brief sees the earlier work). */
+async function loadOpenFeatures() {
+  try { openFeatures = (await api('/api/features')).filter((f) => f.isOpen); } catch { openFeatures = []; }
+}
+
+function renderFeatureChoice() {
+  const p = currentProject();
+  const git = p && p.name !== 'demo' && p.workspace !== 'none';
+  featureBox.hidden = !git || runMode === 'compare';
+  if (featureBox.hidden) return;
+  const mine = openFeatures.filter((f) => f.project === p.name);
+  const options = runMode === 'queue'
+    ? [['__shared', 'One new feature branch for this queue (each brief builds on the one before)'], ['none', 'Each brief on its own branch from ' + p.baseBranch]]
+    : [['', 'Its own branch from ' + p.baseBranch]];
+  for (const f of mine) options.push([f.name, `Continue feature "${f.name}" (${f.runs.length} run${f.runs.length === 1 ? '' : 's'} so far)`]);
+  if (runMode !== 'queue') options.push(['__new', 'Start a new feature…']);
+  const keep = featureSelect.value;
+  featureSelect.replaceChildren(...options.map(([v, t]) => h('option', { value: v }, t)));
+  featureSelect.value = options.some(([v]) => v === keep) ? keep : (runMode === 'queue' && p.branching !== 'feature' ? 'none' : options[0][0]);
+  featureName.hidden = !['__new', '__shared'].includes(featureSelect.value);
+  featureHint.textContent = runMode === 'queue'
+    ? 'Start a brief with the line @own-branch to give just that one its own branch. If a brief of a feature does not finish, the later briefs of that feature are skipped.'
+    : 'Work on a feature stays on one branch until you complete it, so follow-up runs build on the earlier ones.';
+}
+featureSelect.addEventListener('change', renderFeatureChoice);
+
+/** The "feature" value for the request, and (queue) which briefs opted out. Undefined feature means the server default. */
+function featureChoice(briefs) {
+  const v = featureSelect.value;
+  if (featureBox.hidden) return { feature: undefined, briefs, own: [] };
+  const name = featureName.value.trim();
+  const own = [];
+  const cleaned = briefs.map((b, i) => {
+    const m = /^\s*@own-branch[ \t]*\n?/i.exec(b);
+    if (!m) return b;
+    own.push(i + 1);
+    return b.slice(m[0].length).trim();
+  });
+  if (v === '__shared') {
+    const auto = (cleaned[0] ?? '').replace(/^goal:\s*/i, '').split(/\s+/).slice(0, 4).join(' ');
+    return { feature: name || auto || 'queue', briefs: cleaned, own };
+  }
+  if (v === '__new') return { feature: name, briefs: cleaned, own };
+  return { feature: v === '' ? undefined : v, briefs: cleaned, own };
 }
 
 function renderCompareList() {
@@ -1514,6 +1586,7 @@ let typicalData = null;
 
 function refreshProjectPanel() {
   const p = currentProject();
+  renderFeatureChoice();
   showProjectNote(currentProjects);
   renderStageAgents(p);
   renderPipeline(p);
@@ -1622,6 +1695,7 @@ document.getElementById('newRunBtn').addEventListener('click', async () => {
   await loadPresets();
   await loadBriefs();
   runMode = 'single';
+  await loadOpenFeatures();
   applyMode();
   dialog.showModal();
   briefInput.focus();
@@ -1635,7 +1709,10 @@ document.getElementById('newRunForm').addEventListener('submit', async (e) => {
     try {
       const body = { project: projectSelect.value, kind: runMode, auto: autoSettings(), stopOnFailure: stopOnFailure.checked };
       if (runMode === 'queue') {
-        body.briefs = briefInput.value.split(/^\s*-{3,}\s*$/m).map((b) => b.trim()).filter(Boolean);
+        const picked = featureChoice(briefInput.value.split(/^\s*-{3,}\s*$/m).map((b) => b.trim()).filter(Boolean));
+        body.briefs = picked.briefs;
+        if (picked.feature !== undefined) body.feature = picked.feature;
+        if (picked.own.length) body.ownBranch = picked.own;
         body.stages = collectStageChoices();
       } else {
         body.brief = brief;
@@ -1663,6 +1740,7 @@ document.getElementById('newRunForm').addEventListener('submit', async (e) => {
       body: JSON.stringify({
         brief, project: projectSelect.value, stages: collectStageChoices(),
         auto: autoSettings(),
+        feature: featureChoice([]).feature || undefined,
       }),
     });
     briefInput.value = '';

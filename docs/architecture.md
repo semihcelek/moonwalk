@@ -27,6 +27,7 @@ runs/<id>/
 | `EventHub` | Per-run append-only log with live fan-out. `OpenStream(runId, afterSeq)` subscribes and reads the backlog under one lock, so a client gets no gaps and no duplicates |
 | `Fanout<T>` | Publish to all current subscribers through unbounded channels |
 | `RunStore` | In-memory runs, persisted to `run.json`, publishes every change as JSON. On startup, runs left `Queued` or `Running` become `Interrupted` |
+| `FeatureStore`, `Feature` | Named shared branches (`moonwalk/feature/<name>`) several runs build on. One file each in `runs/_features/<project>--<name>.json` (name, branch, `Open`/`Complete`, run ids) |
 | `RunEngine` | Runs a pipeline in the background: workspace lock, prepare, stage loop with decisions, pause, guidance, retry, settle, release, cancel |
 
 `Run` also carries `Waiting` (what the run is waiting for), `Guidance` (notes), `PauseRequested` and `Artifacts` (files under
@@ -426,6 +427,36 @@ and its unfinished items too; nothing is resumed.
 for runs with a branch, `git diff --numstat` totals (files, added, removed) against the base. The UI has a mode switch in the New run dialog, a
 `#/batch/<id>` page (a queue table, or a comparison table with the cheapest and fastest finished variant marked) and chips for running batches on the board (finished batches show as folded blocks).
 
+## Features (`FeatureStore`)
+
+A run normally gets its own branch from the base branch (`moonwalk/<run id>-<slug>`). A **feature** is a branch several runs share. `Run.Feature`
+holds its name; `RunEngine.Start(..., feature)` opens it through `FeatureStore.Open` (creates it, reuses an open one, refuses a `Complete` one;
+names are slugged to `[a-z0-9-]`, at most 40) and records the run in it. `ExecuteAsync` passes `moonwalk/feature/<name>` to
+`IWorkspace.PrepareAsync(..., featureBranch)`:
+
+- the branch does not exist yet: it is created from the base branch (after the usual fetch and fast-forward of the base), like a run branch;
+- it exists: it is checked out as it is (branch mode) or added as a worktree (`git worktree add <dir> <branch>`); it is never reset or fast-forwarded.
+
+Either way `WorkspaceState.StartCommit` records the branch tip when the run started, and `WorkspaceState.DiffBase` (start commit, or the base
+branch for an ordinary run) replaces the base branch wherever a run's own changes are shown or checked: the handover commit list and stat, the
+missing-`.meta` check, `/api/runs/{id}/diff` and the batch stats. For a feature run the range is `StartCommit..run.Commit` (the run's last commit,
+including its `.meta` commit), so earlier and later runs of the feature do not appear in it. A reopened run keeps its original start commit.
+
+Release, abort and recovery behave as for any run: branch mode checks out `ReturnTo` (the repository is not left on the feature branch between runs;
+the project lock is per run as before), an aborted run leaves a `wip` commit on the feature branch, worktree mode removes the folder and keeps the branch.
+Features do not run in parallel with themselves: runs of one feature go one after another (a worktree-mode feature checked out in a live worktree
+refuses a second `worktree add`, which fails that run with git's message).
+
+`SetFeatureComplete` marks a feature `Complete` (refused while one of its runs is active or still holds the workspace) or `Open` again. An `Open`
+feature's branch is protected in `ProtectedReason`, so branch cleanup never deletes it. Deleting a run does not touch the branch.
+
+In a queue (`BatchRequest.Feature`, `OwnBranch`): `feature` names the shared feature; `"none"` means no sharing; empty means "share one named after the
+batch" only when the profile has `"branching": "feature"` and a git workspace, otherwise no sharing. `ownBranch` lists 1-based brief positions
+that get their own branch. Each `BatchItem` and the `Batch` record their feature. When an item with a feature does not finish `Done`, the later
+items of the same feature are `Skipped` with that reason (they build on it); items of other features or of no feature carry on. Comparisons ignore features.
+
+`GET /api/features?project=`, `POST /api/features/{project}/{name}/complete`, `POST .../reopen`.
+
 ## Brief templates and branch hygiene
 
 **Templates.** `BriefStore` keeps one `<name>.md` per template in `briefs/` (`MoonWalk:BriefsDir`). A name must match
@@ -482,7 +513,8 @@ automation flags, and how to follow results, and to answer with a split, a `moon
 | Route | Purpose |
 |---|---|
 | `GET /api/runs`, `GET /api/runs/{id}` | Run snapshots |
-| `POST /api/runs` `{ brief, project }` | Start a run (400 for an unknown or invalid project) |
+| `POST /api/runs` `{ brief, project, stages?, auto?, feature? }` | Start a run (400 for an unknown or invalid project, a completed feature, or a project without a git workspace when `feature` is set) |
+| `GET /api/features?project=`, `POST /api/features/{project}/{name}/complete`, `/reopen` | Shared feature branches: list; complete (409 while a run of it is active or holds the workspace) or reopen |
 | `POST /api/runs/{id}/cancel` | Cancel: the stage's cancellation token fires and the agent process tree is killed |
 | `POST /api/runs/{id}/pause`, `/resume` | Pause before the next stage; resume (409 with a reason when not applicable) |
 | `POST /api/runs/{id}/guidance` `{ text }` | Add a note for later agent prompts |
@@ -490,7 +522,7 @@ automation flags, and how to follow results, and to answer with a split, a `moon
 | `POST /api/runs/{id}/release` | Give the workspace back (409 with a reason while the run is active or if the checkout or folder removal fails) |
 | `POST /api/runs/{id}/recover` | Continue an `Interrupted` run (409 with a reason otherwise) |
 | `POST /api/runs/{id}/reopen` `{ note, from?, agent?, model?, effort?, auto? }` | Continue a finished run on its own branch as a new round (409 with a reason if active, interrupted, the note is empty or the branch is gone) |
-| `GET /api/runs/{id}/diff` | The run's git diff against its base branch (file list and patch) |
+| `GET /api/runs/{id}/diff` | The run's git diff against its base branch, or for a feature run only its own commits (file list and patch) |
 | `POST /api/runs/{id}/archive`, `/unarchive`, `DELETE /api/runs/{id}` | Hide, restore or permanently delete a finished run (409 while active; delete also while it holds the workspace) |
 | `GET /api/runs/{id}/files/{name}` | An artifact of the run (`spec.md`, `evidence/verify.log`, `handover.md`); only names listed on the run |
 | `GET /api/agents` | Known agent names and definitions, plus `agents.json` errors |

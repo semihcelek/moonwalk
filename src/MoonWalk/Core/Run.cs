@@ -96,6 +96,10 @@ public sealed class Run
     /// <summary>Agent, model and effort picked per stage name (empty fields use the project's defaults). Set at start; a retry can change them.</summary>
     public Dictionary<string, MoonWalk.Agents.AgentChoice> StageAgents { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public string? Branch { get; set; }
+
+    /// <summary>Set when the run builds on a feature's shared branch instead of getting a branch of its own.</summary>
+    public string? Feature { get; set; }
+
     public string? ReturnTo { get; set; }
 
     /// <summary>"Branch" or "Worktree", once the workspace exists.</summary>

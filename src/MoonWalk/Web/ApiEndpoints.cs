@@ -7,7 +7,7 @@ using MoonWalk.Workspace;
 
 namespace MoonWalk.Web;
 
-public sealed record NewRunRequest(string? Brief, string? Project, Dictionary<string, AgentChoice>? Stages = null, AutoMode? Auto = null);
+public sealed record NewRunRequest(string? Brief, string? Project, Dictionary<string, AgentChoice>? Stages = null, AutoMode? Auto = null, string? Feature = null);
 
 public sealed record GuidanceRequest(string? Text);
 
@@ -39,12 +39,25 @@ public static class ApiEndpoints
         return new { files, added, removed };
     }
 
+    /// <summary>
+    /// The commits one run changed. A feature run starts where the branch was when it began and ends at its own last commit, so earlier
+    /// and later runs of the same feature do not show up in it. A run with its own branch compares the whole branch with the base.
+    /// </summary>
+    private static string RangeFor(WorkspaceState state, Run run) =>
+        string.IsNullOrEmpty(state.StartCommit)
+            ? $"{state.BaseBranch}..{state.Branch}"
+            : $"{state.StartCommit}..{(string.IsNullOrEmpty(run.Commit) ? state.Branch : run.Commit)}";
+
     private static ProjectEntry? RealProject(ProjectRegistry projects, string? name) =>
         name is not null && projects.Get(name) is { IsValid: true, Profile.IsDemo: false } entry ? entry : null;
 
     /// <summary>Why a run branch must not be deleted right now, or null. Never the checked-out branch, a worktree's, or an unfinished run's.</summary>
-    private static string? ProtectedReason(BranchInfo b, RunStore store)
+    private static string? ProtectedReason(BranchInfo b, RunStore store, FeatureStore features)
     {
+        if (features.IsOpenBranch(b.Name))
+        {
+            return "it belongs to a feature that is still open (complete the feature first)";
+        }
         if (b.Current)
         {
             return "it is checked out in the repository";
@@ -90,7 +103,7 @@ public static class ApiEndpoints
             }
             try
             {
-                var run = engine.Start(request.Brief.Trim(), string.IsNullOrWhiteSpace(request.Project) ? "demo" : request.Project, request.Stages, request.Auto);
+                var run = engine.Start(request.Brief.Trim(), string.IsNullOrWhiteSpace(request.Project) ? "demo" : request.Project, request.Stages, request.Auto, request.Feature);
                 return Results.Content(store.GetJson(run.Id)!, "application/json", statusCode: StatusCodes.Status201Created);
             }
             catch (ArgumentException ex)
@@ -184,7 +197,7 @@ public static class ApiEndpoints
             }
 
             var repo = entry.Profile.RepoPath;
-            var range = $"{state.BaseBranch}..{state.Branch}";
+            var range = RangeFor(state, run);
             var numstat = await Git.RunAsync(repo, ct, "diff", "--numstat", "--no-renames", range);
             if (!numstat.Ok)
             {
@@ -209,7 +222,7 @@ public static class ApiEndpoints
             return Results.Json(new
             {
                 available = true,
-                @base = state.BaseBranch,
+                @base = string.IsNullOrEmpty(state.StartCommit) ? state.BaseBranch : state.StartCommit,
                 branch = state.Branch,
                 files,
                 patch = truncated ? patch[..maxPatch] : patch,
@@ -249,7 +262,7 @@ public static class ApiEndpoints
             briefs.Delete(name) ? Results.Ok(new { deleted = name }) : Results.NotFound());
 
         // Branch hygiene: the moonwalk/* branches runs leave behind.
-        app.MapGet("/api/branches", async (string? project, ProjectRegistry projects, RunStore store, CancellationToken ct) =>
+        app.MapGet("/api/branches", async (string? project, ProjectRegistry projects, RunStore store, FeatureStore features, CancellationToken ct) =>
         {
             if (RealProject(projects, project) is not { } entry)
             {
@@ -261,11 +274,11 @@ public static class ApiEndpoints
                 project = entry.Profile.Name,
                 baseBranch = entry.Profile.BaseBranch,
                 branches = branches.Select(b => new { b.Name, b.Merged, b.Ahead, b.LastCommit, b.Subject, b.RunId, b.Current, b.Worktree,
-                    protectedReason = ProtectedReason(b, store) }),
+                    protectedReason = ProtectedReason(b, store, features) }),
             }, Json.Options);
         });
 
-        app.MapPost("/api/branches/delete", async (BranchRequest request, ProjectRegistry projects, RunStore store, CancellationToken ct) =>
+        app.MapPost("/api/branches/delete", async (BranchRequest request, ProjectRegistry projects, RunStore store, FeatureStore features, CancellationToken ct) =>
         {
             if (RealProject(projects, request.Project) is not { } entry)
             {
@@ -276,7 +289,7 @@ public static class ApiEndpoints
             {
                 return Results.NotFound(new { error = "No such moonwalk branch." });
             }
-            if (ProtectedReason(info, store) is { } why)
+            if (ProtectedReason(info, store, features) is { } why)
             {
                 return Results.Conflict(new { error = $"Not deleted: {why}." });
             }
@@ -284,14 +297,14 @@ public static class ApiEndpoints
             return ok ? Results.Ok(new { message }) : Results.Conflict(new { error = message });
         });
 
-        app.MapPost("/api/branches/delete-merged", async (BranchRequest request, ProjectRegistry projects, RunStore store, CancellationToken ct) =>
+        app.MapPost("/api/branches/delete-merged", async (BranchRequest request, ProjectRegistry projects, RunStore store, FeatureStore features, CancellationToken ct) =>
         {
             if (RealProject(projects, request.Project) is not { } entry)
             {
                 return Results.BadRequest(new { error = "Choose a project that has a repository." });
             }
             var deleted = new List<string>();
-            foreach (var b in (await BranchHygiene.ListAsync(entry.Profile.RepoPath, entry.Profile.BaseBranch, ct)).Where(b => b.Merged && ProtectedReason(b, store) is null))
+            foreach (var b in (await BranchHygiene.ListAsync(entry.Profile.RepoPath, entry.Profile.BaseBranch, ct)).Where(b => b.Merged && ProtectedReason(b, store, features) is null))
             {
                 if ((await BranchHygiene.DeleteAsync(entry.Profile.RepoPath, b.Name, merged: true, force: false, ct)).Ok)
                 {
@@ -305,6 +318,14 @@ public static class ApiEndpoints
             RealProject(projects, request.Project) is { } entry
                 ? Results.Ok(new { message = await BranchHygiene.PruneWorktreesAsync(entry.Profile.RepoPath, ct) })
                 : Results.BadRequest(new { error = "Choose a project that has a repository." }));
+
+        app.MapGet("/api/features", (string? project, FeatureStore features) => Results.Json(features.List(project), Json.Options));
+
+        app.MapPost("/api/features/{project}/{name}/complete", (string project, string name, RunEngine engine) =>
+            Reply(engine.SetFeatureComplete(project, name, true)));
+
+        app.MapPost("/api/features/{project}/{name}/reopen", (string project, string name, RunEngine engine) =>
+            Reply(engine.SetFeatureComplete(project, name, false)));
 
         app.MapGet("/api/batches", (BatchService batches) => Results.Json(batches.List(), Json.Options));
 
@@ -342,7 +363,7 @@ public static class ApiEndpoints
                 if (run is not null && entry is { Profile.IsDemo: false }
                     && WorkspaceState.Load(Path.Combine(paths.RunsRoot, run.Id)) is { Branch.Length: > 0 } state)
                 {
-                    stats = await DiffStatsAsync(entry.Profile.RepoPath, $"{state.BaseBranch}..{state.Branch}", ct);
+                    stats = await DiffStatsAsync(entry.Profile.RepoPath, RangeFor(state, run), ct);
                 }
                 rows.Add(new { item.Index, item.Label, item.Status, item.Error, item.RunId, run, stats });
             }
@@ -367,6 +388,7 @@ public static class ApiEndpoints
                 name = e.Profile.Name,
                 repoPath = e.Profile.IsDemo ? null : e.Profile.RepoPath,
                 baseBranch = e.Profile.IsDemo ? null : e.Profile.BaseBranch,
+                branching = e.Profile.Branching.ToLowerInvariant(),
                 workspace = e.Profile.IsDemo ? "none" : e.Profile.Workspace.ToString().ToLowerInvariant(),
                 dirtyPolicy = e.Profile.DirtyPolicy,
                 agent = e.Profile.IsDemo ? null : e.Profile.Agent,

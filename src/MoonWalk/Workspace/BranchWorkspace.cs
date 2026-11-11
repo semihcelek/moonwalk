@@ -53,7 +53,7 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
         await Git.RunOrThrowAsync(repoPath, ct, "checkout", state.Branch);
     }
 
-    public async Task<WorkspaceState> PrepareAsync(string runId, string title, Action<string> log, CancellationToken ct)
+    public async Task<WorkspaceState> PrepareAsync(string runId, string title, Action<string> log, CancellationToken ct, string? featureBranch = null)
     {
         var inside = await Git.RunAsync(repoPath, ct, "rev-parse", "--is-inside-work-tree");
         if (!inside.Ok || inside.Out.Trim() != "true")
@@ -102,6 +102,19 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
             throw new WorkspaceException($"Base branch '{baseBranch}' does not exist locally.");
         }
 
+        if (featureBranch is not null && (await Git.RunAsync(repoPath, ct, "rev-parse", "--verify", "-q", $"refs/heads/{featureBranch}")).Ok)
+        {
+            // Later run of a feature: build on what is already there. The branch is not reset and not fast-forwarded to anything.
+            state.Branch = featureBranch;
+            if (state.ReturnTo != featureBranch)
+            {
+                log($"Checking out feature branch '{featureBranch}' (was on '{state.ReturnTo}').");
+                await Git.RunOrThrowAsync(repoPath, ct, "checkout", featureBranch);
+            }
+            state.StartCommit = (await Git.RunOrThrowAsync(repoPath, ct, "rev-parse", "HEAD")).Trim();
+            return state;
+        }
+
         if (state.ReturnTo != baseBranch)
         {
             log($"Checking out base branch '{baseBranch}' (was on '{state.ReturnTo}').");
@@ -118,9 +131,13 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
             }
         }
 
-        state.Branch = $"moonwalk/{runId}-{Slug(title)}";
-        log($"Creating branch {state.Branch}.");
+        state.Branch = featureBranch ?? $"moonwalk/{runId}-{Slug(title)}";
+        log(featureBranch is null ? $"Creating branch {state.Branch}." : $"Creating feature branch {state.Branch} from '{baseBranch}'.");
         await Git.RunOrThrowAsync(repoPath, ct, "checkout", "-b", state.Branch);
+        if (featureBranch is not null)
+        {
+            state.StartCommit = (await Git.RunOrThrowAsync(repoPath, ct, "rev-parse", "HEAD")).Trim();
+        }
         return state;
     }
 
@@ -245,7 +262,7 @@ public sealed class BranchWorkspace(string repoPath, string baseBranch, DirtyPol
     /// <summary>Commit list and per-file diff summary of the run branch against its base, for the handover note.</summary>
     public async Task<(string Log, string DiffStat)> GetHandoverInfoAsync(WorkspaceState state, CancellationToken ct)
     {
-        var range = $"{state.BaseBranch}..{state.Branch}";
+        var range = $"{state.DiffBase}..{state.Branch}";
         var log = await Git.RunAsync(repoPath, ct, "log", "--oneline", range);
         var stat = await Git.RunAsync(repoPath, ct, "diff", "--stat", "--no-renames", range);
         return (log.Ok ? log.Out : "", stat.Ok ? stat.Out : "");

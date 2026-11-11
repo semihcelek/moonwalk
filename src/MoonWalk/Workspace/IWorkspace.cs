@@ -20,6 +20,16 @@ public sealed class WorkspaceState
 
     public string BaseBranch { get; set; } = "";
 
+    /// <summary>
+    /// Feature runs only: the commit the feature branch was on when this run started. "What this run changed" is measured from here
+    /// instead of from the base branch, because earlier runs of the feature are already on the branch.
+    /// </summary>
+    public string StartCommit { get; set; } = "";
+
+    /// <summary>What this run's changes are compared against: its start commit on a feature branch, otherwise the base branch.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string DiffBase => string.IsNullOrEmpty(StartCommit) ? BaseBranch : StartCommit;
+
     /// <summary>Branch mode only: paths that were already modified when the run started, with a cheap file signature.</summary>
     public Dictionary<string, string> Baseline { get; set; } = new();
 
@@ -49,7 +59,11 @@ public sealed record HeadDelta(
 /// <summary>Where a run's code changes happen. Two implementations: the project's own folder on a run branch, or a separate git worktree.</summary>
 public interface IWorkspace
 {
-    Task<WorkspaceState> PrepareAsync(string runId, string title, Action<string> log, CancellationToken ct);
+    /// <summary>
+    /// Creates the run's branch from the base branch. With <paramref name="featureBranch"/> the run builds on that branch instead: it is
+    /// checked out as it is (created from the base branch the first time), never reset, and the state records where this run started.
+    /// </summary>
+    Task<WorkspaceState> PrepareAsync(string runId, string title, Action<string> log, CancellationToken ct, string? featureBranch = null);
 
     /// <summary>Makes sure the workspace is usable again after a MoonWalk restart (right branch checked out, folder present). Throws with a reason when not.</summary>
     Task EnsureReadyAsync(WorkspaceState state, CancellationToken ct);

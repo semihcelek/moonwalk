@@ -18,6 +18,9 @@ public sealed class BatchItem
 
     public string? RunId { get; set; }
 
+    /// <summary>The feature whose shared branch this brief builds on, or null when it gets a branch of its own.</summary>
+    public string? Feature { get; set; }
+
     /// <summary>Pending, Running, Done, Failed, Cancelled, Skipped or Interrupted.</summary>
     public string Status { get; set; } = "Pending";
 
@@ -39,6 +42,10 @@ public sealed class Batch
     public string Status { get; set; } = "Running";
 
     public bool StopOnFailure { get; set; }
+
+    /// <summary>The feature the briefs share (they build on each other on one branch), or null when each gets its own branch.</summary>
+    public string? Feature { get; set; }
+
     public bool Parallel { get; set; }
     public AutoMode Auto { get; set; } = new();
     public Dictionary<string, AgentChoice>? Stages { get; set; }
@@ -58,7 +65,9 @@ public sealed record BatchRequest(
     List<VariantRequest>? Variants,
     Dictionary<string, AgentChoice>? Stages,
     AutoMode? Auto,
-    bool StopOnFailure = false);
+    bool StopOnFailure = false,
+    string? Feature = null,
+    List<int>? OwnBranch = null);
 
 /// <summary>Starts and watches batches. A batch is a list of runs the service starts for you, in order, so an overnight list needs no one to click Start.</summary>
 public sealed class BatchService
@@ -133,7 +142,11 @@ public sealed class BatchService
         var entry = _projects.Get(project) ?? throw new ArgumentException($"Unknown project '{project}'.");
         var kind = string.Equals(request.Kind, "compare", StringComparison.OrdinalIgnoreCase) ? "compare" : "queue";
 
+        var now = DateTimeOffset.Now;
+        var batchId = $"b-{now:yyyyMMdd-HHmmss}-{Random.Shared.Next(0x1000, 0xFFFF):x}";
+
         var items = new List<BatchItem>();
+        string? feature = null;
         if (kind == "queue")
         {
             foreach (var brief in (request.Briefs ?? []).Select(b => b.Trim()).Where(b => b.Length > 0))
@@ -145,6 +158,35 @@ public sealed class BatchService
                 throw new ArgumentException("A queue needs at least one brief.");
             }
             _engine.Validate(project, request.Stages);
+
+            // Briefs of a queue build on each other on one feature branch, unless the request says "none" or the project is not in feature mode.
+            var asked = request.Feature?.Trim();
+            var hasGit = !entry.Profile.IsDemo && entry.Profile.Workspace != WorkspaceMode.None;
+            if (string.Equals(asked, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                feature = null;
+            }
+            else if (!string.IsNullOrEmpty(asked))
+            {
+                feature = asked;
+            }
+            else if (hasGit && string.Equals(entry.Profile.Branching, "feature", StringComparison.OrdinalIgnoreCase))
+            {
+                feature = string.IsNullOrWhiteSpace(request.Name) ? "queue-" + batchId[2..] : request.Name.Trim();
+            }
+            if (feature is not null)
+            {
+                if (FeatureStore.Slug(feature).Length == 0)
+                {
+                    throw new ArgumentException($"'{feature}' is not a usable feature name (use letters and digits).");
+                }
+                feature = FeatureStore.Slug(feature);
+                var own = request.OwnBranch ?? [];
+                foreach (var item in items.Where(i => !own.Contains(i.Index)))
+                {
+                    item.Feature = feature;
+                }
+            }
         }
         else
         {
@@ -175,14 +217,14 @@ public sealed class BatchService
             throw new ArgumentException($"A batch can hold at most {MaxItems} runs.");
         }
 
-        var now = DateTimeOffset.Now;
         var batch = new Batch
         {
-            Id = $"b-{now:yyyyMMdd-HHmmss}-{Random.Shared.Next(0x1000, 0xFFFF):x}",
+            Id = batchId,
             Name = string.IsNullOrWhiteSpace(request.Name) ? (kind == "compare" ? "Comparison" : "Queue") + $" of {items.Count}" : request.Name.Trim(),
             Project = entry.Profile.Name,
             Kind = kind,
             StopOnFailure = request.StopOnFailure,
+            Feature = feature,
             Parallel = kind == "compare" && entry.Profile.Workspace == WorkspaceMode.Worktree,
             Auto = request.Auto ?? entry.Profile.Auto,
             Stages = kind == "queue" ? request.Stages : null,
@@ -224,6 +266,7 @@ public sealed class BatchService
             else
             {
                 var stop = false;
+                var brokenFeatures = new HashSet<string>();
                 foreach (var item in batch.Items)
                 {
                     if (stop || ct.IsCancellationRequested)
@@ -232,7 +275,19 @@ public sealed class BatchService
                         Save(batch);
                         continue;
                     }
+                    if (item.Feature is not null && brokenFeatures.Contains(item.Feature))
+                    {
+                        // Later briefs build on the earlier ones: running them on a half-finished feature would waste the agent's quota.
+                        item.Status = "Skipped";
+                        item.Error = $"An earlier brief of feature '{item.Feature}' did not finish, and this one builds on it.";
+                        Save(batch);
+                        continue;
+                    }
                     var status = await RunItemAsync(batch, item, ct);
+                    if (item.Feature is not null && status != "Done")
+                    {
+                        brokenFeatures.Add(item.Feature);
+                    }
                     if (batch.StopOnFailure && status != "Done")
                     {
                         stop = true;
@@ -260,7 +315,7 @@ public sealed class BatchService
     {
         try
         {
-            var run = _engine.Start(item.Brief, batch.Project, item.Stages ?? batch.Stages, batch.Auto);
+            var run = _engine.Start(item.Brief, batch.Project, item.Stages ?? batch.Stages, batch.Auto, item.Feature);
             item.RunId = run.Id;
             item.Status = "Running";
             _store.Update(run.Id, r => { r.BatchId = batch.Id; r.BatchLabel = $"{item.Index}/{batch.Items.Count} {item.Label}"; });

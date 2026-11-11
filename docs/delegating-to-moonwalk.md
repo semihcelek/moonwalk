@@ -17,7 +17,9 @@ Each brief becomes one **run**. A run goes through stages, each done by an agent
 5. **Handover**: the run waits for the person to play it, unless auto mode is on. In a Unity project it first commits the `.meta` files
    the Editor created during the run, and `handover.md` lists new files that still have none (the person opens the project, then retries Handover).
 
-Every run starts from the project's **base branch**, on its own branch, independently of every other run. Nothing is pushed. Finished runs can
+A run normally starts from the project's **base branch** on its own branch, independently of every other run. Briefs that **build on each other**
+(build a feature, then tune it, then polish it) go on one **feature**: a shared branch `moonwalk/feature/<name>` that each run continues
+from where the last one stopped, until the person completes the feature. Nothing is pushed. Finished runs can
 be merged into one **review branch** (`waiting-review` by default) so the person can test several results with a single checkout.
 
 ## Writing a good brief
@@ -28,8 +30,11 @@ The agents are capable but they only know what the brief and the repository tell
   person asked for a specific approach; the plan stage works those out.
 - **Keep it short:** 4 to 12 lines. If it needs more, it is probably two briefs.
 - **One concern per brief.** One mechanic, one bug, one screen. Small briefs finish, cost less, and merge cleanly.
-- **Make briefs independent.** Run B cannot see run A's result, because both start from the base branch. Never write "after the previous
-  task". If B needs A, either put both in one brief, or have A finished and merged into the base branch first, then queue B.
+- **Decide per brief: independent or building on the one before.** On its own branch, run B cannot see run A's result, so never write "after the
+  previous task" for independent briefs. When B really is a follow-up (tune, polish, extend what A built), put A and B in one queue on one
+  **feature** (`"feature": "<name>"`): B then starts from A's code, and the Spec stage sees it. Order matters then, so write each brief as a step that
+  makes sense after the earlier ones. A brief that is unrelated to the rest gets its own branch (`"ownBranch": [<1-based positions>]`). If one brief of
+  a feature does not finish, the later briefs of that feature are skipped, because they build on it.
 - **Point at the right places when you know them.** Name a doc or folder to read ("read `Docs/plans/impact-juice.md` first"). If you do not
   know, say nothing; do not invent paths.
 - **Say what must not change** (other scenes, scoring rules, public APIs, the frame budget). This is what stops agents from drifting.
@@ -82,7 +87,8 @@ Content-Type: application/json
   "stages": { "Spec": { "agent": "claude", "model": "opus", "effort": "high" },
               "Implement": { "agent": "claude", "model": "sonnet", "effort": "medium" } },
   "auto": { "plan": true, "implementation": true, "mergeToReview": true },
-  "stopOnFailure": false
+  "stopOnFailure": false,
+  "feature": "impact-juice"
 }
 ```
 
@@ -132,6 +138,12 @@ for a human, and the queue waits with it. Full auto never retries and never push
 - Fixing a finished run: `POST {{base_url}}/api/runs/{id}/reopen` with `{ "note": "what to change", "from": "Implement" }` continues a Done, Failed
   or Cancelled run **on its own branch** (same run, new round, automation off unless you pass `"auto": { "plan": true, "implementation": true }`).
   Prefer this to starting a new run when the work is already on that branch. It needs a clean working tree in branch mode and returns 409 with a reason otherwise.
+
+- Features: `GET {{base_url}}/api/features?project=<name>` lists them (`isOpen`, `branch`, `runs`). `POST {{base_url}}/api/runs` and `POST /api/batches`
+  take `feature` (a name; created on first use, continued after that; `"none"` on a batch means every brief on its own branch). A queue on a project whose
+  profile says `"branching": "feature"` shares one feature by default. `POST {{base_url}}/api/features/<project>/<name>/complete` ends a feature
+  (409 while one of its runs is active or holds the workspace; the branch stays for review) and `/reopen` undoes that. Only do this when the person asked.
+  A run's `/diff` on a feature shows only that run's commits.
 
 ## Projects
 

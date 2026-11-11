@@ -9,7 +9,7 @@ namespace MoonWalk.Workspace;
 /// </summary>
 public sealed class WorktreeWorkspace(string repoPath, string baseBranch, string? worktreeRoot) : IWorkspace
 {
-    public async Task<WorkspaceState> PrepareAsync(string runId, string title, Action<string> log, CancellationToken ct)
+    public async Task<WorkspaceState> PrepareAsync(string runId, string title, Action<string> log, CancellationToken ct, string? featureBranch = null)
     {
         var inside = await Git.RunAsync(repoPath, ct, "rev-parse", "--is-inside-work-tree");
         if (!inside.Ok || inside.Out.Trim() != "true")
@@ -56,11 +56,24 @@ public sealed class WorktreeWorkspace(string repoPath, string baseBranch, string
         var dir = Path.GetFullPath(Path.Combine(root, runId));
         Directory.CreateDirectory(root);
 
-        var branch = $"moonwalk/{runId}-{BranchWorkspace.Slug(title)}";
-        log($"Creating worktree {dir} on branch {branch} from {startPoint}.");
-        await Git.RunOrThrowAsync(repoPath, ct, "worktree", "add", "-b", branch, dir, startPoint);
+        var branch = featureBranch ?? $"moonwalk/{runId}-{BranchWorkspace.Slug(title)}";
+        if (featureBranch is not null && (await Git.RunAsync(repoPath, ct, "rev-parse", "--verify", "-q", $"refs/heads/{featureBranch}")).Ok)
+        {
+            log($"Creating worktree {dir} on existing feature branch {branch}.");
+            await Git.RunOrThrowAsync(repoPath, ct, "worktree", "add", dir, branch);
+        }
+        else
+        {
+            log($"Creating worktree {dir} on branch {branch} from {startPoint}.");
+            await Git.RunOrThrowAsync(repoPath, ct, "worktree", "add", "-b", branch, dir, startPoint);
+        }
 
-        return new WorkspaceState { Mode = "Worktree", Branch = branch, BaseBranch = baseBranch, WorkDir = dir };
+        var state = new WorkspaceState { Mode = "Worktree", Branch = branch, BaseBranch = baseBranch, WorkDir = dir };
+        if (featureBranch is not null)
+        {
+            state.StartCommit = (await Git.RunOrThrowAsync(dir, ct, "rev-parse", "HEAD")).Trim();
+        }
+        return state;
     }
 
     public Task EnsureReadyAsync(WorkspaceState state, CancellationToken ct) =>

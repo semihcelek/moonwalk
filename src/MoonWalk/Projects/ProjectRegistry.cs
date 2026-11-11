@@ -118,6 +118,11 @@ public sealed class ProjectRegistry(string projectsDir, AgentRegistry agents)
             errors.Add("baseBranch is required.");
         }
 
+        if (!string.Equals(p.Branching, "run", StringComparison.OrdinalIgnoreCase) && !string.Equals(p.Branching, "feature", StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add($"branching '{p.Branching}' must be 'run' or 'feature'.");
+        }
+
         if (!MoonWalk.Workspace.ReviewService.ValidBranchName(p.ReviewBranch))
         {
             errors.Add($"reviewBranch '{p.ReviewBranch}' is not a usable branch name (letters, digits, '.', '_', '-', '/'; not under 'moonwalk/').");

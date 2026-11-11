@@ -61,6 +61,12 @@
           <div id="pipeline" class="pipeline"></div>
           <div id="preflight" class="preflight" aria-live="polite"></div>
         </div>
+        <div class="field" id="featureBox" hidden>
+          <label for="featureSelect">Branch</label>
+          <select id="featureSelect"></select>
+          <input id="featureName" type="text" placeholder="Feature name (letters and digits)" hidden>
+          <small id="featureHint" class="hint"></small>
+        </div>
         <fieldset class="field stage-agents" id="stageAgents" hidden>
           <legend>Agent per stage</legend>
           <div class="preset-row">

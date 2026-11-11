@@ -30,7 +30,9 @@ public sealed class HandoverStage : IStage
         sb.AppendLine();
         sb.AppendLine($"- Project: {context.Profile.Name}");
         sb.AppendLine($"- Run: {context.RunId}");
-        sb.AppendLine($"- Branch: `{state.Branch}` (from `{state.BaseBranch}`)");
+        sb.AppendLine(string.IsNullOrEmpty(state.StartCommit)
+            ? $"- Branch: `{state.Branch}` (from `{state.BaseBranch}`)"
+            : $"- Feature branch: `{state.Branch}` (this run's changes start at `{state.StartCommit[..Math.Min(8, state.StartCommit.Length)]}`; earlier runs of the feature are already on it)");
         if (state.Mode == "Worktree")
         {
             sb.AppendLine($"- The change lives in its own worktree folder: `{state.WorkDir}`. Your own working folder is untouched. Releasing the workspace removes that folder; the branch stays in the repository.");

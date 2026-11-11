@@ -59,7 +59,7 @@ public static class UnityMeta
             }
         }
 
-        var missing = await FindMissingAsync(repo, workspace.State.BaseBranch, ct);
+        var missing = await FindMissingAsync(repo, workspace.State.DiffBase, ct);
         if (missing.Count > 0)
         {
             context.Emit(EventTypes.Warning,

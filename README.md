@@ -228,6 +228,25 @@ The whole batch is checked before anything starts (unknown stage, agent or model
 that are still running show as chips on the board (finished ones are the folded blocks). **Cancel batch** cancels the run in progress and skips the rest. If MoonWalk stops mid-batch, the batch
 comes back as Interrupted and its remaining runs are not started; the runs already started are recovered like any other.
 
+### Features: several runs on one branch
+
+By default every run gets its own branch from the base branch, so a second run cannot see what the first one built. For work that builds on
+itself (add a mechanic, tune it, polish it) use a **feature**: a named branch `moonwalk/feature/<name>` that each run continues from where
+the last one stopped, in the same folder, until you say the feature is finished.
+
+- **New run dialog > Branch**: pick *Start a new feature…* or *Continue feature "<name>"*. For a queue, *One new feature branch for this queue*
+  makes every brief build on the one before; *Each brief on its own branch* is the old behaviour, and a brief that starts with the line
+  `@own-branch` is independent even inside a feature queue.
+- **Project default**: `"branching": "feature"` in the profile makes a queue share one feature unless you choose otherwise (`"run"`, the default,
+  keeps one branch per run). A single run is never put on a feature unless you pick one.
+- **If a brief of a feature does not finish**, the later briefs of that feature are skipped (they build on it), so no quota is spent on code
+  that is not there. Unfinished work stays on the feature branch as a local `wip` commit; the next run, or you, continue from it.
+- **Each run still has its own spec, handover and Changes tab**, showing only that run's commits (from where the branch was when it started to its
+  own last commit).
+- **Complete feature** (on a run of the feature) ends it: no more runs can join, and the branch stays for you to review or merge. **Reopen feature**
+  undoes that. An open feature's branch cannot be deleted from Branch cleanup. Between runs the repository still goes back to the branch it was on, as for any run.
+- **Merge into review branch** on a feature run merges the feature branch as it is at that point, so merge once when the feature is done.
+
 ### Testing several results together: the review branch
 
 Every run is on its own branch, so testing three results would mean three checkouts. Instead, on a finished (Done) run press **Merge into

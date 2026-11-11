@@ -181,6 +181,12 @@ public sealed class ProjectProfile
 
     public WorkspaceMode Workspace { get; set; } = WorkspaceMode.Branch;
 
+    /// <summary>
+    /// "run" (default): every run gets its own branch from the base branch. "feature": the briefs of a queue share one feature branch and
+    /// build on each other, unless a brief opts out. A single run is not affected; name a feature on it to share a branch.
+    /// </summary>
+    public string Branching { get; set; } = "run";
+
     public DirtyPolicy DirtyPolicy { get; set; } = DirtyPolicy.Refuse;
 
     /// <summary>

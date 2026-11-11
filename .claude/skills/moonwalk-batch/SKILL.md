@@ -5,7 +5,7 @@ description: Turn a list of goals, tasks or polish items into independent MoonWa
 
 # Batch tasks into MoonWalk
 
-Goal: several briefs, each independent and small, submitted as ONE batch to the running MoonWalk (`http://localhost:5870`).
+Goal: several small briefs, each independent or an explicit follow-up of the one before it, submitted as ONE batch to the running MoonWalk (`http://localhost:5870`).
 
 ## 1. Read the live facts first (never from memory)
 
@@ -18,7 +18,7 @@ If MoonWalk is not answering, say so and stop. Do not start it unless asked.
 ## 2. Write the briefs
 
 - One concern per brief, 4 to 12 lines, outcome in observable terms. The plan stage finds the files.
-- **Independent**: every run starts from the base branch, so brief B cannot see brief A. If B needs A, merge them into one brief, or run A first and queue B after A is merged.
+- **Independent or follow-up, decided per brief.** On its own branch a run starts from the base branch, so brief B cannot see brief A. If B builds on A (tune, polish, extend), keep them in order in one queue and set `feature: "<short-name>"` on the batch: they then share one branch `moonwalk/feature/<name>` and B starts from A's code. Give an unrelated brief its own branch with `ownBranch: [<1-based positions>]`. A failed brief skips the later briefs of its feature, so do not chain things that do not need each other. Never queue a follow-up brief on its own branch hoping it sees the earlier result: it does not (that wasted a whole queue once).
 - Split by file overlap: two briefs that edit the same file will conflict when merged. Either merge them or note the overlap to the user.
 - State what must not change. Name a doc or folder only if you saw it exist.
 - No git actions, no secrets.
@@ -37,7 +37,9 @@ Show the user the brief list (one line each), the stages/models and auto setting
 ```powershell
 $body = @{ name = "..."; project = "..."; kind = "queue"; briefs = @("...","...")
   stages = @{ Spec = @{agent="muse";model="muse-spark-1.3";effort="high"}; Implement = @{agent="muse";model="muse-ember-1.0";effort="medium"} }
-  auto = @{ plan=$true; implementation=$true; mergeToReview=$true }; stopOnFailure = $false } | ConvertTo-Json -Depth 6
+  auto = @{ plan=$true; implementation=$true; mergeToReview=$true }; stopOnFailure = $false
+  # feature = "hand-throw"; ownBranch = @(4)   # briefs that build on each other share one feature branch; #4 is independent
+} | ConvertTo-Json -Depth 6
 Invoke-RestMethod -Method Post -Uri http://localhost:5870/api/batches -ContentType 'application/json; charset=utf-8' `
   -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 30
 ```
