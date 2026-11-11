@@ -1,0 +1,3 @@
+* text=auto
+*.png binary
+*.sample text eol=lf

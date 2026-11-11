@@ -10,6 +10,16 @@ It is project-agnostic: each project is a profile file (repo path, stages, guard
 > branch or worktree workspaces, the Spec, Implement, Verify and Handover stages, guards, the control surface (gates, pause,
 > retry, guidance, stop), recovery of interrupted runs, and a Settings page with agent health all work end to end.
 
+## Requirements
+
+- The [.NET 10 SDK](https://dotnet.microsoft.com/download) and `git`.
+- Windows is the tested platform (agent processes are tied to MoonWalk through a Windows job object). Other systems are untested.
+- For real runs, at least one agent CLI on your `PATH`: `claude`, `agy` or `muse`, or any CLI you describe in `agents.json`. The
+  built-in `demo` project needs none.
+
+> **Security:** MoonWalk is a local, single-user tool with no authentication. It listens on `localhost` only and its agents can edit
+> the repositories you configure. Do not expose the port. See [SECURITY.md](SECURITY.md).
+
 ## Run it
 
 ```powershell
@@ -265,3 +275,7 @@ The browser tab title shows `(n)` while runs wait for you, and those rows are hi
 4. agy and generic CLI agents, agent health and Settings page, recovery of interrupted runs, worktree mode (done)
 
 Next (see the improvement plan): a Unity compile check and `.meta` auto-commit, and a playtest stage.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
