@@ -74,6 +74,30 @@ Notes:
 8. On failure or stop, partial work is kept as a local `wip(moonwalk)` commit on the run branch, the repository is
    restored, and the project is free again. Nothing is ever pushed or merged.
 
+### Choosing the model per stage
+
+In **New run**, the *Agent per stage* section lets each agent stage use its own agent, model and effort, so you can plan with a
+strong model and implement with a cheaper one. Blank means the project's default.
+
+| Stage | What it is |
+|---|---|
+| Plan (`Spec`) | Writes the acceptance criteria |
+| `Implement` | Changes the code |
+| Unity integrate (`Integrate`) | An agent with the unity-mcp tools wires the scene, checks the Console for `error CS` and reports |
+
+| Agent | Models offered | Effort |
+|---|---|---|
+| `claude` | Opus, Sonnet, Haiku | `low` to `max` (Haiku has none) |
+| `agy` | Gemini 4 Argon, Gemini 3.8 Flash, Claude Opus/Sonnet 5.5, GPT-OSS 120B | Part of the model name (Low, Medium, High) |
+| `muse` | Wonder (plans big), Spark (medium), Ember (bounded steps) | `none` to `ultra` |
+
+Examples: Claude Opus (high) for the plan and Claude Sonnet or Haiku for the implementation; agy Gemini 4 Argon (Medium) to plan
+and Gemini 3.8 Flash (High) for the Unity step; Muse Wonder or Spark to plan and Ember to implement. Efforts are only offered
+where the agent's CLI accepts them, and a choice that cannot work is refused when the run starts. A **retry** can change agent,
+model and effort too. The Integrate stage needs the Unity Editor open with unity-mcp connected; for Claude it is allowed the
+`mcp__unityMCP__*` tools, and agy and Muse need unity-mcp in their own configuration. Add `"Integrate"` to the profile's `stages`
+(after `Implement`) to use it.
+
 ### Branch or worktree
 
 | | `branch` (default) | `worktree` |

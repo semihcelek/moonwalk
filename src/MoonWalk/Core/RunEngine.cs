@@ -1,13 +1,14 @@
 using System.Collections.Concurrent;
 using MoonWalk.Agents;
 using MoonWalk.Pipeline;
+using MoonWalk.Pipeline.Stages;
 using MoonWalk.Projects;
 using MoonWalk.Workspace;
 
 namespace MoonWalk.Core;
 
 /// <summary>What the person decided while a run was waiting: approve, retry (optionally from an earlier stage, with another agent), or stop.</summary>
-public sealed record DecisionRequest(string Action, string? Note = null, string? Agent = null, string? RetryFrom = null);
+public sealed record DecisionRequest(string Action, string? Note = null, string? Agent = null, string? RetryFrom = null, string? Model = null, string? Effort = null);
 
 /// <summary>
 /// Runs a pipeline stage by stage in the background, recording state and emitting events as it goes. A run waits for a
@@ -62,7 +63,7 @@ public sealed class RunEngine
 
     /* ------------------------------------------------------------ starting */
 
-    public Run Start(string brief, string projectName)
+    public Run Start(string brief, string projectName, IReadOnlyDictionary<string, AgentChoice>? choices = null)
     {
         var entry = _projects.Get(projectName) ?? throw new ArgumentException($"Unknown project '{projectName}'.");
         if (!entry.IsValid)
@@ -72,6 +73,27 @@ public sealed class RunEngine
 
         var profile = entry.Profile;
         var stages = PipelineFactory.Create(profile);
+        var stageAgents = new Dictionary<string, AgentChoice>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (stageName, choice) in choices ?? new Dictionary<string, AgentChoice>())
+        {
+            if (stages.All(s => !string.Equals(s.Name, stageName, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new ArgumentException($"Unknown stage '{stageName}'.");
+            }
+            var agentFor = string.IsNullOrWhiteSpace(choice.Agent) ? profile.Agent : choice.Agent;
+            if (!_agents.IsKnown(agentFor))
+            {
+                throw new ArgumentException($"Unknown agent '{agentFor}'.");
+            }
+            if (ModelCatalog.Validate(agentFor, choice.Model, choice.Effort) is { } problem)
+            {
+                throw new ArgumentException($"{stageName}: {problem}");
+            }
+            if (!string.IsNullOrWhiteSpace(choice.Agent) || !string.IsNullOrWhiteSpace(choice.Model) || !string.IsNullOrWhiteSpace(choice.Effort))
+            {
+                stageAgents[stageName] = choice;
+            }
+        }
         var now = DateTimeOffset.Now;
         var run = new Run
         {
@@ -80,6 +102,7 @@ public sealed class RunEngine
             Brief = brief,
             Title = MakeTitle(brief),
             Agent = profile.IsDemo ? null : profile.Agent,
+            StageAgents = stageAgents,
             CreatedAt = now,
             Stages = stages.Select(s => new StageRecord { Name = s.Name }).ToList(),
         };
@@ -89,6 +112,14 @@ public sealed class RunEngine
         _controls[run.Id] = control;
         _ = Task.Run(() => ExecuteAsync(run.Id, brief, profile, stages, control, recover: false));
         return run;
+    }
+
+    /// <summary>The agent for one stage: the run's choice for that stage (agent, model, effort) over the project's defaults.</summary>
+    private IAgent CreateStageAgent(string runId, string stageName, string currentAgent, ProjectProfile profile)
+    {
+        var choice = _store.Get(runId)?.StageAgents.GetValueOrDefault(stageName);
+        var name = string.IsNullOrWhiteSpace(choice?.Agent) ? currentAgent : choice!.Agent!;
+        return _agents.Create(name, profile, choice?.Model, choice?.Effort);
     }
 
     /// <summary>
@@ -248,6 +279,10 @@ public sealed class RunEngine
                     if (request.Agent is { Length: > 0 } agent && !_agents.IsKnown(agent))
                     {
                         return (false, $"Unknown agent '{agent}'.");
+                    }
+                    if (ModelCatalog.Validate(request.Agent is { Length: > 0 } a2 ? a2 : _store.Get(id)?.Agent ?? "", request.Model, request.Effort) is { } problem)
+                    {
+                        return (false, problem);
                     }
                     break;
                 default:
@@ -456,7 +491,7 @@ public sealed class RunEngine
                             UpdateRunAction = mutate => _store.Update(id, mutate),
                             GetRunFunc = () => _store.Get(id),
                             Workspace = session,
-                            Agent = profile.IsDemo ? null : _agents.Create(agentName, profile),
+                            Agent = profile.IsDemo ? null : CreateStageAgent(id, stage.Name, agentName, profile),
                             Attempt = attempts[stage.Name],
                             Guidance = _store.Get(id)!.Guidance.Select(g => g.Text).ToList(),
                             PreviousFailure = previousFailure,
@@ -560,6 +595,20 @@ public sealed class RunEngine
                 if (target < 0)
                 {
                     target = index;
+                }
+                if (!string.IsNullOrWhiteSpace(decision.Model) || !string.IsNullOrWhiteSpace(decision.Effort))
+                {
+                    _store.Update(id, r =>
+                    {
+                        for (var i = target; i < stages.Count; i++)
+                        {
+                            if (stages[i] is not (SpecStage or ImplementStage or IntegrateStage))
+                            {
+                                continue;
+                            }
+                            r.StageAgents[stages[i].Name] = new AgentChoice(agentName, decision.Model, decision.Effort);
+                        }
+                    });
                 }
                 _hub.Append(id, EventTypes.Decision, stage.Name,
                     $"Retrying from {stages[target].Name}" + (agentName != profile.Agent ? $" with agent {agentName}." : "."));

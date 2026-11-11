@@ -6,7 +6,7 @@ using MoonWalk.Projects;
 
 namespace MoonWalk.Web;
 
-public sealed record NewRunRequest(string? Brief, string? Project);
+public sealed record NewRunRequest(string? Brief, string? Project, Dictionary<string, AgentChoice>? Stages = null);
 
 public sealed record GuidanceRequest(string? Text);
 
@@ -30,7 +30,7 @@ public static class ApiEndpoints
             }
             try
             {
-                var run = engine.Start(request.Brief.Trim(), string.IsNullOrWhiteSpace(request.Project) ? "demo" : request.Project);
+                var run = engine.Start(request.Brief.Trim(), string.IsNullOrWhiteSpace(request.Project) ? "demo" : request.Project, request.Stages);
                 return Results.Content(store.GetJson(run.Id)!, "application/json", statusCode: StatusCodes.Status201Created);
             }
             catch (ArgumentException ex)
@@ -56,6 +56,8 @@ public static class ApiEndpoints
 
         app.MapGet("/api/agents", (AgentRegistry agents) =>
             Results.Json(new { agents = agents.Names, details = agents.List(), errors = agents.Errors }, Json.Options));
+
+        app.MapGet("/api/models", () => Results.Json(ModelCatalog.All, Json.Options));
 
         app.MapGet("/api/agents/health", async (AgentRegistry agents, CancellationToken ct) =>
             Results.Json(new { agents = await agents.CheckAllAsync(ct), errors = agents.Errors }, Json.Options));

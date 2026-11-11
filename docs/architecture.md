@@ -97,12 +97,21 @@ into the feed as `System` events and is saved as `evidence/verify.log`. The firs
 Writes `handover.md` (branch, stage results, commits and diff stat against the base branch, guidance given, what to do next) and
 returns `NeedsHuman`, so the run waits for you to play the result with the repository on the run branch.
 
+### IntegrateStage
+
+The Unity step after Implement. An agent with the unity-mcp tools reads the Console and waits for compilation (fixing any `error CS`),
+wires what the change needs into the scene or assets, checks the Console again and saves. It has its own agent, model and effort like
+every agent stage. For Claude the allowed tools are the profile's plus `mcp__unityMCP__*`. Whatever it changed on disk goes through the
+same baseline check, guards and commit as Implement (changing nothing is fine: scene edits made through unity-mcp live in the open
+Editor until saved). If the Editor is not reachable it replies `STATUS: BLOCKED`, which waits for you like any blocked stage. Its report
+is saved as the `integrate.md` artifact.
+
 ### ImplementStage
 
 1. Build the prompt: the brief, the approved `spec.md` if there is one, guidance and the previous failure, a "this is a retry, check git status and log first" note on later attempts, fixed rules (smallest change, no git commit/push/add, final summary, `STATUS: BLOCKED` if it cannot finish), then the profile's `extraInstructions`.
 2. Run the agent in the repository folder.
 3. Fail on timeout, non-zero exit or `is_error`; `Blocked` when the answer starts with `STATUS: BLOCKED`.
-4. Ask the workspace what changed. `Blocked` if the agent edited a file that was already modified before the run (baseline policy); `Failed` if nothing changed.
+4. Ask the workspace what changed. `Blocked` if the agent edited a file that was already modified before the run (baseline policy). If nothing changed: `Failed` on the first attempt, but a **retry** (attempt 2 or later) passes when the run branch already has commits, because the earlier attempt's work then stands ("No further changes needed").
 5. Stage exactly those paths, count changed lines, run `Guards.Check`. Violations fail the stage.
 6. Commit only those paths with trailers `MoonWalk-Run`, `MoonWalk-Agent` (and `Co-Authored-By` for Claude).
 
@@ -234,6 +243,26 @@ Runs `claude -p --output-format stream-json --verbose --include-partial-messages
 | `rate_limit_event` not `allowed` | `Warning` |
 | `result` | kept as the agent result: final text, cost, turns, session id (not an event; the stage reports it) |
 | anything non-JSON, stderr | `System` / `Warning` |
+
+## Models and effort per stage
+
+`ModelCatalog` lists, per built-in agent, the models the UI offers and the effort levels each accepts (`GET /api/models`): Claude
+`opus`, `sonnet`, `haiku` with `low`..`max` (Haiku none); agy's model ids with the effort baked into the name (so no separate effort);
+Muse `muse-wonder-1.0`, `muse-spark-1.3`, `muse-ember-1.0` with `none`..`ultra`. Custom agents from `agents.json` take no model or effort.
+`ModelCatalog.Validate(agent, model, effort)` returns the reason a choice cannot work.
+
+A run stores `StageAgents`: stage name to `AgentChoice(agent, model, effort)`, every field optional (empty means the project's default).
+`POST /api/runs` takes it as `stages`; the engine validates it at start (unknown stage, agent, model or effort is a 400 naming the stage)
+and `CreateStageAgent` builds each stage's agent from the run's choice. The choice is applied to a **copy** of the project's agent
+options (`AgentRegistry.Create(name, profile, model, effort)`), so it never leaks into the shared profile or other runs. The adapters pass
+it as `--model` plus `--effort` (Claude), `--reasoning-effort` (Muse) or a model id with the effort inside it (agy).
+
+A retry decision may carry `agent`, `model` and `effort`; they are validated against the catalog and applied to every Spec, Implement and
+Integrate stage from the retry point onward, and stored back on the run. The model each stage actually started with is visible in the
+feed's "Agent session started (model)" line.
+
+`RunStore.Save` retries the atomic replace of `run.json` a few times (25 ms steps), because on Windows an antivirus scan, the search
+indexer or an open viewer can hold the file for a moment and fail the replace with "Access to the path is denied".
 
 ## Event types
 

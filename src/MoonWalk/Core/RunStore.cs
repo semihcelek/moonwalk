@@ -109,6 +109,21 @@ public sealed class RunStore
         var path = Path.Combine(dir, "run.json");
         var temp = path + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(run, new JsonSerializerOptions(Json.Options) { WriteIndented = true }));
-        File.Move(temp, path, overwrite: true);
+
+        // On Windows an antivirus scan, the search indexer or an open viewer can hold run.json for a moment, which makes the
+        // replace fail with "Access to the path is denied". The lock is short, so retry before giving up.
+        const int attempts = 8;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(temp, path, overwrite: true);
+                return;
+            }
+            catch (Exception e) when (attempt < attempts && e is UnauthorizedAccessException or IOException)
+            {
+                Thread.Sleep(25 * attempt);
+            }
+        }
     }
 }

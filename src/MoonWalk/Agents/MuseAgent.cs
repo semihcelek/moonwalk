@@ -36,6 +36,11 @@ public sealed class MuseAgent(MuseOptions options) : IAgent
                 args.Add("--model");
                 args.Add(options.Model);
             }
+            if (!string.IsNullOrWhiteSpace(options.Effort))
+            {
+                args.Add("--reasoning-effort");
+                args.Add(options.Effort);
+            }
             if (request.ReadOnly)
             {
                 args.Add("--disable-write");

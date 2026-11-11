@@ -5,7 +5,7 @@ namespace MoonWalk.Pipeline;
 
 public static class PipelineFactory
 {
-    public static readonly string[] Known = ["Spec", "Implement", "Verify", "Handover"];
+    public static readonly string[] Known = ["Spec", "Implement", "Integrate", "Verify", "Handover"];
 
     public static bool IsKnown(string name) => Known.Contains(name, StringComparer.OrdinalIgnoreCase);
 
@@ -20,6 +20,7 @@ public static class PipelineFactory
         {
             "spec" => new SpecStage(),
             "implement" => new ImplementStage(),
+            "integrate" => new IntegrateStage(),
             "verify" => new VerifyStage(),
             "handover" => new HandoverStage(),
             _ => throw new ArgumentException($"Unknown stage '{name}'."),

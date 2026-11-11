@@ -63,6 +63,9 @@ public sealed class Run
     public RunStatus Status { get; set; } = RunStatus.Queued;
     public string? CurrentStage { get; set; }
     public string? Agent { get; set; }
+
+    /// <summary>Agent, model and effort picked per stage name (empty fields use the project's defaults). Set at start; a retry can change them.</summary>
+    public Dictionary<string, MoonWalk.Agents.AgentChoice> StageAgents { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public string? Branch { get; set; }
     public string? ReturnTo { get; set; }
 

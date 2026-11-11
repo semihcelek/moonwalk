@@ -36,6 +36,11 @@
         <select id="project"><option value="demo">demo</option></select>
         <small id="projectNote" class="hint"></small>
       </label>
+      <fieldset class="field stage-agents" id="stageAgents" hidden>
+        <legend>Agent per stage</legend>
+        <div id="stageAgentRows"></div>
+        <small class="hint">Blank means the project's default. Plan with a strong model, implement with a cheaper one.</small>
+      </fieldset>
       <div class="modal-actions">
         <button class="btn" value="cancel" type="button" id="newRunCancel">Cancel</button>
         <button class="btn primary" type="submit" id="newRunSubmit">Start run</button>

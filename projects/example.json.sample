@@ -23,6 +23,9 @@
 
   // Spec: read-only agent writes acceptance criteria. Implement: agent changes the code, MoonWalk commits it.
   // Verify: runs the commands below. Handover: writes a summary and waits for you to play the result.
+  // Add "Integrate" after "Implement" for Unity projects: an agent with unity-mcp wires the scene and checks the Console.
+  // The model and effort of each agent stage are chosen per run in the New run dialog; "claude.model" and "claude.effort" below
+  // (and the same for agy and muse) are only the defaults.
   "stages": ["Spec", "Implement", "Verify", "Handover"],
 
   // The run pauses after these stages until you approve, redo with a note, or stop.

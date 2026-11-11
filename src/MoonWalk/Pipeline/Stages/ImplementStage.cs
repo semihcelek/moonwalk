@@ -55,6 +55,14 @@ public sealed class ImplementStage : IStage
         }
         if (changes.Paths.Count == 0)
         {
+            // A retry whose earlier attempt already committed the work may find there is nothing left to change. That is a pass,
+            // not a failure: the commits already on the run branch stand. A first attempt with nothing to show is still a failure.
+            var (branchLog, _) = await workspace.Workspace.GetHandoverInfoAsync(workspace.State, ct);
+            if (context.Attempt > 1 && !string.IsNullOrWhiteSpace(branchLog))
+            {
+                context.Emit(EventTypes.System, "No further file changes were needed; the earlier commit on this branch stands.");
+                return StageResult.Passed("No further changes needed; " + Short(result.Text, 300));
+            }
             return StageResult.Failed($"The agent finished without changing any file. {Short(result.Text)} {Short(result.Diagnostics, 400)}".Trim());
         }
 

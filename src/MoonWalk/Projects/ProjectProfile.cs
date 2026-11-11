@@ -36,6 +36,9 @@ public sealed class ClaudeOptions
 
     public string? Model { get; set; }
 
+    /// <summary>Passed as --effort (low, medium, high, xhigh, max). Empty: the CLI's own default.</summary>
+    public string? Effort { get; set; }
+
     public int MaxTurns { get; set; } = 60;
 
     public int TimeoutMinutes { get; set; } = 45;
@@ -83,6 +86,9 @@ public sealed class MuseOptions
     public string Path { get; set; } = "muse";
 
     public string? Model { get; set; }
+
+    /// <summary>Passed as --reasoning-effort (none ... ultra). Empty: Muse's own default.</summary>
+    public string? Effort { get; set; }
 
     public int TimeoutMinutes { get; set; } = 45;
 

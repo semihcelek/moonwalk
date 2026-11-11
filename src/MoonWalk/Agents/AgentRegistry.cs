@@ -106,16 +106,17 @@ public sealed class AgentRegistry(string file)
 
     public bool IsKnown(string name) => List().Any(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase));
 
-    public IAgent Create(string name, ProjectProfile profile)
+    public IAgent Create(string name, ProjectProfile profile, string? model = null, string? effort = null)
     {
         switch (name.ToLowerInvariant())
         {
             case "claude":
-                return new ClaudeAgent(profile.Claude);
+                return new ClaudeAgent(Override(profile.Claude, model, effort, (o, m) => o.Model = m, (o, e) => o.Effort = e));
             case "agy":
-                return new AgyAgent(profile.Agy);
+                // agy puts the effort in the model name, so a chosen model replaces the profile's effort.
+                return new AgyAgent(Override(profile.Agy, model, null, (o, m) => { o.Model = m; o.Effort = null; }, (_, _) => { }));
             case "muse":
-                return new MuseAgent(profile.Muse);
+                return new MuseAgent(Override(profile.Muse, model, effort, (o, m) => o.Model = m, (o, e) => o.Effort = e));
         }
 
         AgentDefinition? definition;
@@ -124,6 +125,25 @@ public sealed class AgentRegistry(string file)
             definition = _custom.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
         }
         return definition is null ? throw new ArgumentException($"Unknown agent '{name}'.") : new GenericCliAgent(definition);
+    }
+
+    // Per-stage choices must not leak into the shared profile, so they apply to a copy.
+    private static T Override<T>(T options, string? model, string? effort, Action<T, string> setModel, Action<T, string> setEffort)
+    {
+        if (string.IsNullOrWhiteSpace(model) && string.IsNullOrWhiteSpace(effort))
+        {
+            return options;
+        }
+        var copy = JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(options))!;
+        if (!string.IsNullOrWhiteSpace(model))
+        {
+            setModel(copy, model);
+        }
+        if (!string.IsNullOrWhiteSpace(effort))
+        {
+            setEffort(copy, effort);
+        }
+        return copy;
     }
 
     /// <summary>Runs each agent's version command (a few seconds at most) to see whether it is installed. Uses the default command names, not per-project paths.</summary>

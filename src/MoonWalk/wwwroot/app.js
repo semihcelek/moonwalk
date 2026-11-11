@@ -514,8 +514,67 @@ async function loadProjects() {
       p.valid ? p.name : `${p.name} (invalid)`)));
   const first = projects.find((p) => p.valid && p.name !== 'demo') ?? projects.find((p) => p.valid);
   if (first) projectSelect.value = first.name;
+  try {
+    catalog = await api('/api/models');
+    agentList = (await api('/api/agents')).agents;
+  } catch { catalog = []; agentList = []; }
   showProjectNote(projects);
-  projectSelect.onchange = () => showProjectNote(projects);
+  renderStageAgents(projects.find((x) => x.name === projectSelect.value));
+  projectSelect.onchange = () => {
+    showProjectNote(projects);
+    renderStageAgents(projects.find((x) => x.name === projectSelect.value));
+  };
+}
+
+/* Per-stage agent / model / effort pickers. The catalog (/api/models) says which models and efforts each agent accepts. */
+const STAGE_LABELS = { Spec: 'Plan (Spec)', Implement: 'Implement', Integrate: 'Unity integrate (unity-mcp)' };
+const stageAgentsBox = document.getElementById('stageAgents');
+const stageAgentRows = document.getElementById('stageAgentRows');
+let catalog = [];
+let agentList = [];
+let stageSelects = {}; // stage name -> { agent, model, effort }
+
+const fill = (select, items, blankLabel) => {
+  const keep = select.value;
+  select.replaceChildren(h('option', { value: '' }, blankLabel), ...items.map(([v, label]) => h('option', { value: v }, label)));
+  select.value = items.some(([v]) => v === keep) ? keep : '';
+};
+
+function refreshStageRow(refs, defaultAgent) {
+  const agent = refs.agent.value || defaultAgent;
+  const entry = catalog.find((c) => c.agent === agent);
+  fill(refs.model, (entry?.models ?? []).map((m) => [m.id, m.label]), entry ? 'default model' : 'n/a');
+  const model = entry?.models.find((m) => m.id === refs.model.value);
+  const efforts = model ? model.efforts : (entry?.efforts ?? []);
+  fill(refs.effort, efforts.map((e) => [e, e]), efforts.length ? 'default effort' : (entry?.effortNote ? 'in model name' : 'n/a'));
+  refs.model.disabled = !entry;
+  refs.effort.disabled = efforts.length === 0;
+}
+
+function renderStageAgents(project) {
+  stageSelects = {};
+  const stages = (project?.stages ?? []).filter((s) => STAGE_LABELS[s]);
+  stageAgentsBox.hidden = !project || project.name === 'demo' || stages.length === 0;
+  stageAgentRows.replaceChildren();
+  if (stageAgentsBox.hidden) return;
+  for (const stage of stages) {
+    const refs = { agent: h('select', {}), model: h('select', {}), effort: h('select', {}) };
+    fill(refs.agent, agentList.map((a) => [a, a]), `default (${project.agent})`);
+    refs.agent.onchange = () => { refs.model.value = ''; refreshStageRow(refs, project.agent); };
+    refs.model.onchange = () => refreshStageRow(refs, project.agent);
+    refreshStageRow(refs, project.agent);
+    stageSelects[stage] = refs;
+    stageAgentRows.append(h('div', { class: 'stage-row' }, h('span', { class: 'stage-name' }, STAGE_LABELS[stage]), refs.agent, refs.model, refs.effort));
+  }
+}
+
+function collectStageChoices() {
+  const out = {};
+  for (const [stage, refs] of Object.entries(stageSelects)) {
+    const choice = { agent: refs.agent.value || null, model: refs.model.value || null, effort: refs.effort.value || null };
+    if (choice.agent || choice.model || choice.effort) out[stage] = choice;
+  }
+  return out;
 }
 
 function showProjectNote(projects) {
@@ -542,7 +601,7 @@ document.getElementById('newRunForm').addEventListener('submit', async (e) => {
     const run = await api('/api/runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ brief, project: projectSelect.value }),
+      body: JSON.stringify({ brief, project: projectSelect.value, stages: collectStageChoices() }),
     });
     briefInput.value = '';
     dialog.close();
