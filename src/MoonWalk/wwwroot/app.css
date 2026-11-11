@@ -450,3 +450,11 @@ dialog::backdrop { background: rgba(4, 6, 10, 0.7); backdrop-filter: blur(3px); 
 /* keyboard cursor on the board */
 .run-row.cursor { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .run-row.attn.cursor { box-shadow: inset 3px 0 0 var(--warn), 0 0 0 1px var(--accent); }
+
+/* a batch folded into one block */
+.batch-block { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 6px 8px 8px; }
+.batch-head { display: flex; align-items: center; gap: 8px; }
+.batch-head .group-head { margin: 0; flex: 1; min-width: 0; }
+.batch-rows { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.group-badge.bad { color: var(--bad); border-color: rgba(248, 113, 113, 0.4); }
+.batch-block .run-row { background: var(--bg); }

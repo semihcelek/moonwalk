@@ -128,6 +128,10 @@ archive or restore them together; a toast offers **Undo**. Archiving hides a run
 on the run page, removes the run's folder (events, artifacts) for good; the git branch is never touched. Delete is refused while a
 run is active or still holds its workspace.
 
+Runs that came from the same queue or comparison fold into one block (**Queue: name, 2/5 done**, with badges for runs that need you,
+are active or failed). Click it to open the rows, **Archive N** archives its finished runs, **Open** goes to the batch page. A block
+with a run waiting for you stays open.
+
 Keyboard on the board: `j` / `k` move the highlighted row, `Enter` opens it, `e` archives or restores it, `x` selects it, `/` jumps to
 search (`Esc` leaves it) and `n` opens the New run dialog.
 

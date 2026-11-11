@@ -337,6 +337,9 @@ The app sets the invariant culture at startup so dollar amounts and counts in me
   `localStorage`) puts runs in collapsible per-project sections (`collapsedGroups`). Finished runs have a checkbox (`selected`) and an
   Archive/Restore button; bulk archive just calls the existing per-run routes in parallel (the server still refuses active runs) and
   `toast` offers Undo, which calls the opposite route. No new API.
+  Batches: `loadBatches` also fills `batchInfo` (id to name, kind, done, total from `GET /api/batches`) and re-renders when it changes.
+  `batchRows` folds two or more shown runs with the same `batchId` into a `batchBlock` (collapsed unless in `openBatches` or a run needs
+  you); a single run of a batch stays a plain row. No new API.
   Keyboard: one document-level `keydown` listener hands keys to `boardKeys`, which only the board sets (`route()` clears it), and it
   ignores typing in inputs and open dialogs. `cursor` (run id plus index) is the highlighted row; if that row disappears (archived),
   the cursor stays at the same position.

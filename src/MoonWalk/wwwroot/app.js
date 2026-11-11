@@ -269,6 +269,9 @@ function route() {
 const batchLink = (id, text) => h('a', { class: 'batch-chip', href: `#/batch/${encodeURIComponent(id)}` }, text);
 
 let batchStamp = 0;
+/** id -> {name, kind, done, total}: lets the board label a batch's runs. Filled by loadBatches. */
+const batchInfo = new Map();
+let batchSig = '';
 
 /** The most recent batches as chips on the board. */
 async function loadBatches(strip, force = false) {
@@ -276,6 +279,10 @@ async function loadBatches(strip, force = false) {
   batchStamp = Date.now();
   try {
     const all = await api('/api/batches');
+    const sig = JSON.stringify(all.map((b) => [b.id, b.name, b.status, b.items.map((i) => i.status)]));
+    batchInfo.clear();
+    for (const b of all) batchInfo.set(b.id, { name: b.name, kind: b.kind, total: b.items.length, done: b.items.filter((i) => !['Pending', 'Running'].includes(i.status)).length });
+    if (sig !== batchSig) { batchSig = sig; onRunsChanged?.(); }
     put(strip, all.slice(0, 4).map((b) => {
       const done = b.items.filter((i) => !['Pending', 'Running'].includes(i.status)).length;
       return batchLink(b.id, `${b.kind === 'compare' ? 'Comparison' : 'Queue'}: ${b.name} · ${done}/${b.items.length} · ${b.status}`);
@@ -548,6 +555,46 @@ async function showBoard() {
       !closed && h('div', { class: 'runs' }, rows));
   };
 
+  /** Runs of one batch (two or more shown) fold into a block with a progress count; others stay plain rows. */
+  const batchRows = (rs, opts) => {
+    const counts = new Map();
+    for (const r of rs) if (r.batchId) counts.set(r.batchId, (counts.get(r.batchId) ?? 0) + 1);
+    const out = [];
+    const seen = new Set();
+    for (const r of rs) {
+      if (!r.batchId || counts.get(r.batchId) < 2) { out.push(runRow(r, opts)); continue; }
+      if (seen.has(r.batchId)) continue;
+      seen.add(r.batchId);
+      out.push(batchBlock(r.batchId, rs.filter((x) => x.batchId === r.batchId), opts));
+    }
+    return out;
+  };
+
+  const batchBlock = (id, rs, opts) => {
+    const info = batchInfo.get(id);
+    const attention = rs.filter(needsYou).length;
+    const live = rs.filter((r) => isActive(r.status)).length;
+    const failed = rs.filter((r) => ['Failed', 'Interrupted'].includes(r.status)).length;
+    const open = openBatches.has(id) || attention > 0;
+    const archivable = rs.filter((r) => !isActive(r.status) && !r.archived);
+    const done = info ? info.done : rs.filter((r) => !isActive(r.status)).length;
+    const total = info ? info.total : rs.length;
+    return h('div', { class: 'batch-block' },
+      h('div', { class: 'batch-head' },
+        h('button', {
+          class: 'group-head', type: 'button', 'aria-expanded': open ? 'true' : 'false',
+          onclick: () => { if (openBatches.has(id)) openBatches.delete(id); else openBatches.add(id); render(); },
+        }, h('span', { class: 'chev' }, open ? '▾' : '▸'),
+        h('span', { class: 'group-name' }, info ? `${info.kind === 'compare' ? 'Comparison' : 'Queue'}: ${info.name}` : 'Batch'),
+        h('span', { class: 'group-count' }, `${done}/${total} done`),
+        attention ? h('span', { class: 'group-badge attn' }, `${attention} need you`) : null,
+        live ? h('span', { class: 'group-badge' }, `${live} active`) : null,
+        failed ? h('span', { class: 'group-badge bad' }, `${failed} failed`) : null),
+        archivable.length ? h('button', { class: 'btn small', type: 'button', onclick: () => archiveRuns(archivable.map((r) => r.id), true) }, `Archive ${archivable.length}`) : null,
+        h('a', { class: 'btn small', href: `#/batch/${encodeURIComponent(id)}` }, 'Open')),
+      open && h('div', { class: 'batch-rows' }, rs.map((r) => runRow(r, opts))));
+  };
+
   const render = () => {
     const all = [...runs.values()].sort(byNewest);
     for (const id of [...selected]) if (!runs.has(id) || !matches(runs.get(id))) selected.delete(id);
@@ -577,7 +624,7 @@ async function showBoard() {
       put(list, ordered.map((g) => {
         const cost = g.rs.reduce((n, r) => n + totals(r).cost, 0);
         const running = g.rs.filter((r) => isActive(r.status)).length;
-        return section(g.name, g.rs.length, g.rs.map((r) => runRow(r, { ...rowOptions, selected, hideProject: true })), `p:${g.name}`, [
+        return section(g.name, g.rs.length, batchRows(g.rs, { ...rowOptions, selected, hideProject: true }), `p:${g.name}`, [
           g.attention ? h('span', { class: 'group-badge attn' }, `${g.attention} need you`) : null,
           running ? h('span', { class: 'group-badge' }, `${running} active`) : null,
           cost ? h('span', { class: 'group-spend' }, fmtUsd(cost)) : null,
@@ -586,7 +633,7 @@ async function showBoard() {
     } else {
       const waiting = shown.filter(needsYou);
       const rest = shown.filter((r) => !needsYou(r));
-      const rows = (rs) => rs.map((r) => runRow(r, { ...rowOptions, selected }));
+      const rows = (rs) => batchRows(rs, { ...rowOptions, selected });
       if (!waiting.length) put(list, rows(rest));
       else put(list, section('Needs you', waiting.length, rows(waiting), 'needs-you'), rest.length ? section('Everything else', rest.length, rows(rest), 'rest') : null);
     }
@@ -660,6 +707,7 @@ const boardFilter = { q: '', status: '', project: '', archived: false, group: st
 const selected = new Set();
 const cursor = { id: null, index: 0 };
 const collapsedGroups = new Set();
+const openBatches = new Set();
 
 /** Archives or restores finished runs from the board, then offers an undo. The server refuses active runs; those are counted, not hidden. */
 async function archiveRuns(ids, archived) {
