@@ -63,7 +63,7 @@ public sealed class RunEngine
 
     /* ------------------------------------------------------------ starting */
 
-    public Run Start(string brief, string projectName, IReadOnlyDictionary<string, AgentChoice>? choices = null)
+    public Run Start(string brief, string projectName, IReadOnlyDictionary<string, AgentChoice>? choices = null, AutoMode? auto = null)
     {
         var entry = _projects.Get(projectName) ?? throw new ArgumentException($"Unknown project '{projectName}'.");
         if (!entry.IsValid)
@@ -103,6 +103,7 @@ public sealed class RunEngine
             Title = MakeTitle(brief),
             Agent = profile.IsDemo ? null : profile.Agent,
             StageAgents = stageAgents,
+            Auto = new AutoMode { Plan = (auto ?? profile.Auto).Plan, Implementation = (auto ?? profile.Auto).Implementation },
             CreatedAt = now,
             Stages = stages.Select(s => new StageRecord { Name = s.Name }).ToList(),
         };
@@ -606,7 +607,22 @@ public sealed class RunEngine
                     }
                 }
 
-                var decision = await WaitForDecisionAsync(id, control, wait, ct);
+                // Auto mode answers the question itself; otherwise the run waits for a person.
+                string? autoFailure = null;
+                DecisionRequest decision;
+                var (autoDecision, autoReason) = AutoDecision(_store.Get(id)!.Auto, wait);
+                if (autoDecision is not null)
+                {
+                    decision = autoDecision;
+                    autoFailure = autoReason;
+                    _hub.Append(id, EventTypes.Decision, stage.Name, autoDecision.Action == "approve"
+                        ? $"Auto mode: approved {stage.Name} ({wait.Reason})."
+                        : $"Auto mode: stopping the run instead of waiting. {wait.Message}");
+                }
+                else
+                {
+                    decision = await WaitForDecisionAsync(id, control, wait, ct);
+                }
                 _store.Update(id, r =>
                 {
                     r.Status = RunStatus.Running;
@@ -621,9 +637,12 @@ public sealed class RunEngine
 
                 if (decision.Action == "stop")
                 {
-                    _hub.Append(id, EventTypes.Decision, stage.Name, "Run stopped by you.");
-                    status = RunStatus.Cancelled;
-                    error = "Stopped by user.";
+                    if (autoFailure is null)
+                    {
+                        _hub.Append(id, EventTypes.Decision, stage.Name, "Run stopped by you.");
+                    }
+                    status = autoFailure is null ? RunStatus.Cancelled : RunStatus.Failed;
+                    error = autoFailure ?? "Stopped by user.";
                     break;
                 }
 
@@ -714,6 +733,37 @@ public sealed class RunEngine
         Finish(id, status, error);
         _controls.TryRemove(id, out _);
         control.Cts.Dispose();
+
+        // Unattended runs hand the workspace back, so the next run on the project can start.
+        if (status == RunStatus.Done && _store.Get(id) is { Auto.Implementation: true, WorkspaceHeld: true })
+        {
+            var (released, message) = await ReleaseAsync(id);
+            if (!released)
+            {
+                _hub.Append(id, EventTypes.Warning, null, $"Auto mode could not release the workspace: {message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// What a run may answer by itself. Gates are the plan; Review is the implementation. A stage that failed or was blocked, or a passed
+    /// budget, is only answered (by stopping the run) when everything is automatic, so a half-automatic run still waits for you there.
+    /// </summary>
+    private static (DecisionRequest? Decision, string? Failure) AutoDecision(AutoMode auto, WaitState wait)
+    {
+        if (wait.Reason == "Gate" && auto.Plan)
+        {
+            return (new DecisionRequest("approve"), null);
+        }
+        if (wait.Reason == "Review" && auto.Implementation)
+        {
+            return (new DecisionRequest("approve"), null);
+        }
+        if (auto.Full && wait.Reason is "Failed" or "Blocked" or "Budget")
+        {
+            return (new DecisionRequest("stop"), $"{wait.Stage} {wait.Reason.ToLowerInvariant()}: {wait.Message} (full auto mode stops instead of waiting)");
+        }
+        return (null, null);
     }
 
     /// <summary>Dollars left under the project's cost limit, for agents that can enforce a per-run cap (Claude). Null when there is no limit.</summary>

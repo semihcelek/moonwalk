@@ -36,6 +36,28 @@ function fmtTokens(n) {
 
 const fmtUsd = (n) => (n >= 1 ? `$${n.toFixed(2)}` : `$${n.toFixed(3)}`);
 
+const AGENT_STAGES = ['Spec', 'Implement', 'Integrate'];
+const STAGE_SHORT = { Spec: 'plan', Implement: 'implement', Integrate: 'unity' };
+
+/**
+ * The agent a stage uses or used: what it actually ran with, else the run's choice for that stage, else the run's current default.
+ * (run.agent alone is only the project default, which is misleading once a stage picks another agent.)
+ */
+function stageAgent(run, stageName) {
+  const stage = run.stages.find((s) => s.name === stageName);
+  const choices = run.stageAgents ?? {};
+  const key = Object.keys(choices).find((k) => k.toLowerCase() === stageName.toLowerCase());
+  return stage?.agent || (key ? choices[key]?.agent : null) || run.agent || '';
+}
+
+/** "agy" when every agent stage uses one agent, otherwise "plan agy · implement muse". Empty for runs without agents (the demo). */
+function agentsLine(run) {
+  const parts = run.stages.filter((s) => AGENT_STAGES.includes(s.name)).map((s) => ({ stage: s.name, agent: stageAgent(run, s.name) })).filter((p) => p.agent);
+  if (!parts.length) return '';
+  const distinct = [...new Set(parts.map((p) => p.agent))];
+  return distinct.length === 1 ? distinct[0] : parts.map((p) => `${STAGE_SHORT[p.stage]} ${p.agent}`).join(' · ');
+}
+
 /** Sums a run's usage ledger, optionally for one stage. */
 function totals(run, stage) {
   const entries = (run.usage ?? []).filter((u) => !stage || u.stage === stage);
@@ -561,7 +583,7 @@ async function showRun(id) {
     // After a playtest, feedback usually means changing the code again: default to Implement. Otherwise redo the stage that is waiting.
     const retryDefault = w.reason === 'Review' && r.stages.some((s) => s.name === 'Implement') ? 'Implement' : w.stage;
     const retryFrom = h('select', {}, r.stages.map((s) => h('option', { value: s.name, selected: s.name === retryDefault }, s.name)));
-    const agent = h('select', {}, agentNames.map((a) => h('option', { value: a, selected: a === r.agent }, a)));
+    const agent = h('select', {}, agentNames.map((a) => h('option', { value: a, selected: a === stageAgent(r, w.stage) }, a)));
     const decide = (action, extra = {}) => attempt(() => post(`/api/runs/${encodeURIComponent(id)}/decision`, { action, note: note.value.trim() || null, ...extra }));
     const attention = { Gate: 'Review needed', Review: 'Your turn', Failed: 'Stage failed', Blocked: 'Stage blocked', Budget: 'Budget reached' }[w.reason] ?? 'Needs you';
 
@@ -599,7 +621,9 @@ async function showRun(id) {
     put(facts,
       h('span', {}, 'Project ', h('b', {}, r.project)),
       h('span', {}, 'Run ', h('b', {}, r.id)),
-      r.agent && h('span', {}, 'Agent ', h('b', {}, r.agent)),
+      agentsLine(r) && h('span', {}, 'Agents ', h('b', {}, agentsLine(r))),
+      (r.auto?.plan || r.auto?.implementation) && h('span', { class: 'auto-tag', title: 'This run can approve itself' },
+        r.auto.plan && r.auto.implementation ? 'full auto' : r.auto.plan ? 'auto plan' : 'auto implementation'),
       r.branch && h('span', {}, 'Branch ', h('b', {}, r.branch)),
       r.commit && h('span', {}, 'Commit ', h('b', {}, r.commit)),
       totals(r).tokens > 0 && h('span', {}, 'Tokens ', h('b', {}, fmtTokens(totals(r).tokens))),
@@ -800,7 +824,13 @@ function refreshStageRow(refs, defaultAgent) {
   refs.effort.disabled = efforts.length === 0;
 }
 
+const autoPlan = document.getElementById('autoPlan');
+const autoImpl = document.getElementById('autoImpl');
+
 function renderStageAgents(project) {
+  // The project's own default for automation, which the checkboxes then let you change for this run.
+  autoPlan.checked = !!project?.auto?.plan;
+  autoImpl.checked = !!project?.auto?.implementation;
   stageSelects = {};
   const stages = (project?.stages ?? []).filter((s) => STAGE_LABELS[s]);
   stageAgentsBox.hidden = !project || project.name === 'demo' || stages.length === 0;
@@ -905,7 +935,10 @@ document.getElementById('newRunForm').addEventListener('submit', async (e) => {
     const run = await api('/api/runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ brief, project: projectSelect.value, stages: collectStageChoices() }),
+      body: JSON.stringify({
+        brief, project: projectSelect.value, stages: collectStageChoices(),
+        auto: { plan: autoPlan.checked, implementation: autoImpl.checked },
+      }),
     });
     briefInput.value = '';
     dialog.close();

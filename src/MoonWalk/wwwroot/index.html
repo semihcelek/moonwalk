@@ -49,6 +49,12 @@
         <div id="stageAgentRows"></div>
         <small class="hint">Blank means the project's default. Plan with a strong model, implement with a cheaper one.</small>
       </fieldset>
+      <fieldset class="field auto-mode" id="autoMode">
+        <legend>Automation</legend>
+        <label class="check"><input type="checkbox" id="autoPlan"> Auto-accept the plan</label>
+        <label class="check"><input type="checkbox" id="autoImpl"> Auto-accept the implementation (and release the workspace afterwards)</label>
+        <small class="hint">With both on the run is fully automatic: a failed or blocked stage, or a passed budget, stops the run instead of waiting for you.</small>
+      </fieldset>
       <div class="modal-actions">
         <button class="btn" value="cancel" type="button" id="newRunCancel">Cancel</button>
         <button class="btn primary" type="submit" id="newRunSubmit">Start run</button>

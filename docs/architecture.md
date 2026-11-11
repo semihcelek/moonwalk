@@ -92,6 +92,20 @@ in a job object that dies with MoonWalk (see Safety below), so a recovered run n
   itself and left nothing uncommitted passes with that as its result. This matters for agents MoonWalk cannot hold to a tool list
   (agy with `allowedCommands`, Muse with `allowShell`).
 
+### Auto mode
+
+`Run.Auto` (`AutoMode { Plan, Implementation }`, set at start from the dialog or the project's `auto` default) lets a run answer its own
+questions. In the loop, right where a run would wait, `AutoDecision(auto, wait)` returns a decision: a `Gate` wait is approved when
+`Plan` is on; a `Review` wait (Handover) is approved when `Implementation` is on; `Failed`, `Blocked` and `Budget` waits are answered
+with **stop** only when both are on (`Full`), and that stop ends the run as `Failed` with the stage message and "full auto mode stops
+instead of waiting" (a person's stop is `Cancelled`). Each automatic answer is recorded as a `Decision` event ("Auto mode: ..."). After
+a run finishes `Done` with `Implementation` on, the engine calls `ReleaseAsync`, so in branch mode the next run on the project is not
+left waiting for a release. Automatic mode never retries and never pushes or merges.
+
+The run page's agent line is derived from the stages, not from `Run.Agent` (which is only the project default): `stageAgent(run, stage)`
+takes the agent the stage actually ran with (`StageRecord.Agent`), else the run's per-stage choice, else the default, and `agentsLine`
+shows one name when all agent stages agree and otherwise "plan agy · implement muse".
+
 ### SpecStage
 
 Asks the agent to be read-only (Claude: tools `Read`, `Grep`, `Glob` with `Edit`, `Write`, `NotebookEdit` and the shells blocked,

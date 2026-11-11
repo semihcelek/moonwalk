@@ -59,6 +59,20 @@ public sealed class UsageEntry
     public double? CostUsd { get; set; }
 }
 
+/// <summary>
+/// Lets a run go on without you. <see cref="Plan"/> approves the gates after a stage (normally the plan); <see cref="Implementation"/>
+/// approves the final review (Handover) and then gives the workspace back, so the next run can start. With both on the run is fully
+/// automatic and a failed or blocked stage, or a passed budget, stops the run (as Failed) instead of waiting for a person.
+/// </summary>
+public sealed class AutoMode
+{
+    public bool Plan { get; set; }
+    public bool Implementation { get; set; }
+
+    public bool Full => Plan && Implementation;
+    public bool Any => Plan || Implementation;
+}
+
 public sealed class GuidanceNote
 {
     public DateTimeOffset Time { get; set; } = DateTimeOffset.Now;
@@ -97,6 +111,9 @@ public sealed class Run
 
     public WaitState? Waiting { get; set; }
     public bool PauseRequested { get; set; }
+
+    /// <summary>What this run may decide for itself. Set at start from the dialog or the project's default.</summary>
+    public AutoMode Auto { get; set; } = new();
 
     /// <summary>Hidden from the board unless "show archived" is on. Only finished runs can be archived.</summary>
     public bool Archived { get; set; }

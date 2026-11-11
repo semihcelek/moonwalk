@@ -7,7 +7,7 @@ using MoonWalk.Workspace;
 
 namespace MoonWalk.Web;
 
-public sealed record NewRunRequest(string? Brief, string? Project, Dictionary<string, AgentChoice>? Stages = null);
+public sealed record NewRunRequest(string? Brief, string? Project, Dictionary<string, AgentChoice>? Stages = null, AutoMode? Auto = null);
 
 public sealed record GuidanceRequest(string? Text);
 
@@ -33,7 +33,7 @@ public static class ApiEndpoints
             }
             try
             {
-                var run = engine.Start(request.Brief.Trim(), string.IsNullOrWhiteSpace(request.Project) ? "demo" : request.Project, request.Stages);
+                var run = engine.Start(request.Brief.Trim(), string.IsNullOrWhiteSpace(request.Project) ? "demo" : request.Project, request.Stages, request.Auto);
                 return Results.Content(store.GetJson(run.Id)!, "application/json", statusCode: StatusCodes.Status201Created);
             }
             catch (ArgumentException ex)
@@ -179,6 +179,7 @@ public static class ApiEndpoints
                 workspace = e.Profile.IsDemo ? "none" : e.Profile.Workspace.ToString().ToLowerInvariant(),
                 dirtyPolicy = e.Profile.DirtyPolicy,
                 agent = e.Profile.IsDemo ? null : e.Profile.Agent,
+                auto = e.Profile.Auto,
                 stages = e.Profile.Stages,
                 valid = e.IsValid,
                 errors = e.Errors,

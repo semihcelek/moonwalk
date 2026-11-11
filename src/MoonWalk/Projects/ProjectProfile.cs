@@ -166,6 +166,9 @@ public sealed class ProjectProfile
 
     public BudgetLimits Budget { get; set; } = new();
 
+    /// <summary>The default automation for runs of this project; the New run dialog can change it per run.</summary>
+    public MoonWalk.Core.AutoMode Auto { get; set; } = new();
+
     public MuseOptions Muse { get; set; } = new();
 
     /// <summary>Worktree mode only: the folder that holds the per-run worktrees. Default: <c>wt-moonwalk</c> beside the repository.</summary>

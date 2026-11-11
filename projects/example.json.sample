@@ -41,6 +41,10 @@
     "Read docs/conventions.md before changing code."
   ],
 
+  // Default automation for runs of this project (the New run dialog can change it per run). "plan" approves the gates after a stage;
+  // "implementation" approves the final review and releases the workspace. With both on, a failed stage or a passed budget stops the run.
+  "auto": { "plan": false, "implementation": false },
+
   // Optional spending limits for one run. When one is passed after a stage, the run waits for you (continue, retry or stop).
   // Claude is also capped inside each stage by the remaining dollars. Only Claude reports dollars; the others report tokens.
   "budget": { "maxCostUsd": 1.00, "maxTokens": 3000000 },

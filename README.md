@@ -119,6 +119,20 @@ The bell in the top bar turns on browser notifications (the browser asks for per
 are told when a run **needs you** (a gate, a failed or blocked stage, the budget, or the playtest at Handover), **finishes**, **fails**
 or is **interrupted**. Clicking the notification opens that run. They work only while a MoonWalk tab is open; there is no phone push.
 
+### Running without you (auto mode)
+
+The New run dialog has two checkboxes under **Automation**; a project profile can set the defaults with `"auto": { "plan": true,
+"implementation": true }`.
+
+| Setting | What the run does by itself |
+|---|---|
+| Auto-accept the plan | Approves the gates after a stage (normally Spec), so it goes straight on to Implement |
+| Auto-accept the implementation | Approves the final review (Handover), finishes as Done, **then releases the workspace**, so the next run on the project can start |
+| Both (full auto) | Also **stops the run as Failed** when a stage fails or is blocked, or a budget is passed, instead of waiting for you |
+
+With only one box ticked, failures still wait for you. Full auto never retries on its own and never merges or pushes: the result is a
+branch left in the repository for you to look at later. The run page shows a *full auto* / *auto plan* / *auto implementation* tag.
+
 ### Presets
 
 The *Agent per stage* section has a **Preset** dropdown. Built in: Claude Opus plans and Sonnet implements, Claude Sonnet plans and

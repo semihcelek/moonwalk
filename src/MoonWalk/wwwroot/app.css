@@ -216,6 +216,13 @@ main { flex: 1; min-height: 0; padding: 24px 20px 32px; width: 100%; max-width: 
 .filter-bar .inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .run-row.archived { opacity: 0.55; }
 
+/* automation */
+.auto-mode { border: 1px solid var(--border-strong); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; }
+.auto-mode legend { padding: 0 6px; color: var(--muted); font-size: 12px; }
+.check { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; cursor: pointer; }
+.check input { width: auto; }
+.auto-tag { padding: 1px 9px; border-radius: 999px; border: 1px solid rgba(251, 191, 36, 0.4); color: var(--warn); font-size: 11px; font-weight: 600; align-self: center; }
+
 /* notification bell */
 .bell { background: transparent; border: 1px solid transparent; color: var(--faint); border-radius: 8px; padding: 6px; cursor: pointer; display: inline-flex; }
 .bell:hover { color: var(--text); background: var(--surface-2); }
