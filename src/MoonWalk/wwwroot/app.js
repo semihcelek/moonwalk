@@ -531,6 +531,7 @@ async function showBoard() {
   const updateBulk = () => {
     const shownFinished = [...runs.values()].filter((r) => matches(r) && selectable(r));
     const picked = [...selected].map((id) => runs.get(id)).filter(Boolean);
+    const stale = [...runs.values()].filter((r) => r.status === 'Done' && !r.archived && Date.now() - new Date(r.finishedAt ?? r.updatedAt).getTime() > STALE_DAYS * 864e5);
     const toArchive = picked.filter((r) => !r.archived);
     const toRestore = picked.filter((r) => r.archived);
     put(bulk,
@@ -538,6 +539,7 @@ async function showBoard() {
       toArchive.length ? h('button', { class: 'btn small', type: 'button', onclick: () => archiveRuns(toArchive.map((r) => r.id), true) }, `Archive ${toArchive.length}`) : null,
       toRestore.length ? h('button', { class: 'btn small', type: 'button', onclick: () => archiveRuns(toRestore.map((r) => r.id), false) }, `Restore ${toRestore.length}`) : null,
       picked.length ? h('button', { class: 'btn small', type: 'button', onclick: () => { selected.clear(); render(); } }, 'Clear') : null,
+      !picked.length && stale.length ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => archiveRuns(stale.map((r) => r.id), true) }, `Archive Done older than ${STALE_DAYS} days (${stale.length})`) : null,
       !picked.length && shownFinished.length ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => { for (const r of shownFinished.filter((x) => !x.archived)) selected.add(r.id); render(); } }, 'Select finished') : null);
     bulk.hidden = !bulk.childNodes.length;
     for (const cb of list.querySelectorAll('input[data-run]')) cb.checked = selected.has(cb.dataset.run);
@@ -704,6 +706,7 @@ async function showBoard() {
 let storedGroup = 'flat';
 try { storedGroup = localStorage.getItem('moonwalk.boardGroup') === 'project' ? 'project' : 'flat'; } catch { /* storage can be blocked */ }
 const boardFilter = { q: '', status: '', project: '', archived: false, group: storedGroup };
+const STALE_DAYS = 7;
 const selected = new Set();
 const cursor = { id: null, index: 0 };
 const collapsedGroups = new Set();
