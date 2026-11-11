@@ -5,6 +5,7 @@ const view = document.getElementById('view');
 const runs = new Map();
 let currentRunView = null;
 let onRunsChanged = null;
+let boardKeys = null; /* key handler of the board while it is shown */
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -251,6 +252,7 @@ function updateTitle() {
 function route() {
   teardownRunView();
   onRunsChanged = null;
+  boardKeys = null;
   const match = location.hash.match(/^#\/run\/(.+)$/);
   const batchMatch = location.hash.match(/^#\/batch\/(.+)$/);
   const settings = location.hash === '#/settings';
@@ -490,7 +492,7 @@ async function showBoard() {
   const batchStrip = h('div', { class: 'usage-strip' });
 
   /* filters: kept in boardFilter so they survive live updates and navigating away and back */
-  const search = h('input', { type: 'search', class: 'filter-q', placeholder: 'Search title, id, project or brief', value: boardFilter.q, 'aria-label': 'Search runs' });
+  const search = h('input', { type: 'search', class: 'filter-q', placeholder: 'Search title, id, project or brief  ( / )', value: boardFilter.q, 'aria-label': 'Search runs' });
   const statusSel = h('select', { 'aria-label': 'Status' },
     [['', 'Any status'], ['active', 'Active'], ['WaitingForHuman', 'Needs you'], ['Done', 'Done'], ['Failed', 'Failed or interrupted'], ['Cancelled', 'Cancelled']]
       .map(([v, l]) => h('option', { value: v, selected: v === boardFilter.status }, l)));
@@ -589,7 +591,43 @@ async function showBoard() {
       else put(list, section('Needs you', waiting.length, rows(waiting), 'needs-you'), rest.length ? section('Everything else', rest.length, rows(rest), 'rest') : null);
     }
     updateBulk();
+    applyCursor();
   };
+
+  /* keyboard: j/k move, Enter opens, e archives or restores, x selects, / searches, n starts a run */
+  const rowsInView = () => [...list.querySelectorAll('.run-row')];
+  const applyCursor = () => {
+    const rows = rowsInView();
+    for (const r of rows) r.classList.remove('cursor');
+    if (!rows.length || cursor.id == null) return;
+    let el = rows.find((r) => r.dataset.id === cursor.id);
+    if (!el) { el = rows[Math.min(cursor.index, rows.length - 1)]; cursor.id = el.dataset.id; }
+    cursor.index = rows.indexOf(el);
+    el.classList.add('cursor');
+  };
+  const moveCursor = (delta) => {
+    const rows = rowsInView();
+    if (!rows.length) return;
+    const next = cursor.id == null ? (delta > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, cursor.index + delta));
+    cursor.id = rows[next].dataset.id; cursor.index = next;
+    applyCursor();
+    rows[next].scrollIntoView({ block: 'nearest' });
+  };
+  boardKeys = (e) => {
+    const run = cursor.id == null ? null : runs.get(cursor.id);
+    switch (e.key) {
+      case '/': search.focus(); search.select(); break;
+      case 'j': moveCursor(1); break;
+      case 'k': moveCursor(-1); break;
+      case 'Enter': case 'o': if (run) location.hash = `#/run/${encodeURIComponent(run.id)}`; else return; break;
+      case 'e': if (run && !isActive(run.status)) archiveRuns([run.id], !run.archived); else return; break;
+      case 'x': if (run && !isActive(run.status)) { if (selected.has(run.id)) selected.delete(run.id); else selected.add(run.id); updateBulk(); } else return; break;
+      case 'n': document.getElementById('newRunBtn').click(); break;
+      default: return;
+    }
+    e.preventDefault();
+  };
+  search.addEventListener('keydown', (e) => { if (e.key === 'Escape') search.blur(); });
 
   search.addEventListener('input', () => { boardFilter.q = search.value; render(); });
   statusSel.addEventListener('change', () => { boardFilter.status = statusSel.value; render(); });
@@ -620,6 +658,7 @@ let storedGroup = 'flat';
 try { storedGroup = localStorage.getItem('moonwalk.boardGroup') === 'project' ? 'project' : 'flat'; } catch { /* storage can be blocked */ }
 const boardFilter = { q: '', status: '', project: '', archived: false, group: storedGroup };
 const selected = new Set();
+const cursor = { id: null, index: 0 };
 const collapsedGroups = new Set();
 
 /** Archives or restores finished runs from the board, then offers an undo. The server refuses active runs; those are counted, not hidden. */
@@ -671,7 +710,7 @@ function runRow(run, opts = {}) {
   const meta = [opts.hideProject ? null : run.project, run.id, run.batchLabel ? `batch ${run.batchLabel}` : null, run.branch, spend, run.archived ? 'archived' : null]
     .filter(Boolean).join(' · ');
   const dots = h('span', { class: 'dots' }, (run.stages ?? []).map((s) => h('i', { class: `dot s-${s.status.toLowerCase()}`, title: `${s.name}: ${STATUS_LABEL[s.status] ?? s.status}` })));
-  return h('div', { class: `run-row${run.status === 'WaitingForHuman' ? ' attn' : ''}${run.archived ? ' archived' : ''}` },
+  return h('div', { 'data-id': run.id, class: `run-row${run.status === 'WaitingForHuman' ? ' attn' : ''}${run.archived ? ' archived' : ''}` },
     finished
       ? h('input', {
         type: 'checkbox', class: 'pick', 'data-run': run.id, checked: opts.selected?.has(run.id), 'aria-label': `Select ${run.title}`,
@@ -1342,3 +1381,10 @@ document.getElementById('newRunForm').addEventListener('submit', async (e) => {
 
 startGlobalStream();
 route();
+
+document.addEventListener('keydown', (e) => {
+  if (!boardKeys || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('dialog[open]')) return;
+  const t = e.target;
+  if (t instanceof HTMLElement && (t.matches('input, textarea, select') || t.isContentEditable)) return;
+  boardKeys(e);
+});
