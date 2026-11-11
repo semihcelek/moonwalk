@@ -102,6 +102,9 @@ already holds the work, keep what works, change only what the guidance asks. The
   (agents, verify steps) right after launch, and children join automatically. The OS closes the handle when MoonWalk exits, however it
   exits, so even a hard kill takes the agent down with it. Without a job (other platforms) only the normal cancel and timeout kill apply.
   There is a tiny window between a process starting and being added to the job.
+- **Cancel never hangs.** After cancel or timeout `CliProcess` kills the tree, then waits at most 10 s for exit and 10 s for the output
+  pipes. A child that cannot be killed (Muse runs shell commands as its own `muse-sbx-*` Windows accounts, which MoonWalk cannot kill, and
+  such children may not be in the job) is reported in the run's stderr and the run ends instead of hanging; that child may keep running.
 - **Agents touching git.** Before an agent stage, `IWorkspace.GetHeadAsync` records the branch head; afterwards `InspectAsync` reports
   whether it moved, the commits, files and lines they touched, and whether the run branch exists on `origin` (a push updates the local
   remote-tracking ref, so this needs no network). `AgentGitCheck` then applies the rules for Implement and Integrate:

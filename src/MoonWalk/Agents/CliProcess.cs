@@ -59,8 +59,18 @@ public static class CliProcess
         }
         catch (OperationCanceledException)
         {
-            Kill(process);
-            await process.WaitForExitAsync(CancellationToken.None);
+            var killed = Kill(process, onStderr);
+            // Never wait without a bound: a child we cannot kill (for example a sandbox account's process) can keep the
+            // redirected pipes open, and WaitForExitAsync only returns once they close.
+            using var grace = new CancellationTokenSource(KillGrace);
+            try
+            {
+                await process.WaitForExitAsync(grace.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                onStderr($"MoonWalk: the agent process did not stop within {KillGrace.TotalSeconds:0}s" + (killed ? "." : " and could not be killed (another user's process?)."));
+            }
             if (ct.IsCancellationRequested)
             {
                 throw;
@@ -68,9 +78,16 @@ public static class CliProcess
             timedOut = true;
         }
 
-        await Task.WhenAll(stdout, stderr);
-        return (process.ExitCode, timedOut);
+        // Pipes may stay open if a surviving grandchild holds them; do not wait for them forever.
+        var pumps = Task.WhenAll(stdout, stderr);
+        if (await Task.WhenAny(pumps, Task.Delay(KillGrace)) != pumps)
+        {
+            onStderr("MoonWalk: stopped reading agent output (a leftover process still holds the pipes).");
+        }
+        return (process.HasExited ? process.ExitCode : -1, timedOut);
     }
+
+    private static readonly TimeSpan KillGrace = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Finds a command the way a shell would (PATH plus PATHEXT), so "muse" finds muse.cmd. CreateProcess alone only appends ".exe".
@@ -113,24 +130,39 @@ public static class CliProcess
 
     private static async Task PumpAsync(StreamReader reader, Action<string> onLine)
     {
-        while (await reader.ReadLineAsync() is { } line)
+        try
         {
-            if (line.Length > 0)
+            while (await reader.ReadLineAsync() is { } line)
             {
-                onLine(line);
+                if (line.Length > 0)
+                {
+                    onLine(line);
+                }
             }
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            // The process was disposed while we stopped waiting for a stuck pipe.
         }
     }
 
-    private static void Kill(Process process)
+    /// <summary>Kills the tree. Returns false when part of it could not be killed (access denied for another user's process).</summary>
+    private static bool Kill(Process process, Action<string> log)
     {
         try
         {
             process.Kill(entireProcessTree: true);
+            return true;
         }
         catch (InvalidOperationException)
         {
-            // Already exited.
+            return true; // Already exited.
+        }
+        catch (Exception ex)
+        {
+            log($"MoonWalk: could not kill the whole process tree: {ex.Message}");
+            try { process.Kill(); } catch { }
+            return false;
         }
     }
 }
