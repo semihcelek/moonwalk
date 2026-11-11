@@ -133,6 +133,24 @@ The New run dialog has two checkboxes under **Automation**; a project profile ca
 With only one box ticked, failures still wait for you. Full auto never retries on its own and never merges or pushes: the result is a
 branch left in the repository for you to look at later. The run page shows a *full auto* / *auto plan* / *auto implementation* tag.
 
+### Queue and compare
+
+The **New run** dialog has a switch at the top:
+
+- **Queue several**: paste several briefs separated by a line containing `---`. MoonWalk starts them one after another (the stage
+  choices and automation you set apply to all). Tick *Stop the queue at the first run that does not finish* to skip the rest after
+  a failure. Use full auto and the whole list runs with nobody there; without auto, each run waits for you as usual and the queue
+  waits with it.
+- **Compare agents**: one brief, and you tick two or more variants (the built-in presets, your saved ones, or *Project defaults*).
+  Each variant runs the brief with its own agent, model and effort for the plan and the implementation. On a branch-mode project they
+  run one at a time; on a **worktree-mode** project all of them run at once. The batch page is a table of agents and models, status,
+  time, tokens, cost and how many files and lines each variant changed, with the cheapest and the fastest highlighted; **open** goes to
+  the run and its Changes tab.
+
+The whole batch is checked before anything starts (unknown stage, agent or model is refused with the reason), and recent batches
+show as chips on the board. **Cancel batch** cancels the run in progress and skips the rest. If MoonWalk stops mid-batch, the batch
+comes back as Interrupted and its remaining runs are not started; the runs already started are recovered like any other.
+
 ### Presets
 
 The *Agent per stage* section has a **Preset** dropdown. Built in: Claude Opus plans and Sonnet implements, Claude Sonnet plans and
@@ -206,5 +224,5 @@ The browser tab title shows `(n)` while runs wait for you, and those rows are hi
 3. Control surface: gates, pause/resume, retry, guidance notes, Spec, Verify and Handover stages (done)
 4. agy and generic CLI agents, agent health and Settings page, recovery of interrupted runs, worktree mode (done)
 
-Next (see the improvement plan): a Unity compile check and `.meta` auto-commit, a task queue and agent comparison, and a playtest
+Next (see the improvement plan): brief templates and branch cleanup, a Unity compile check and `.meta` auto-commit, and a playtest
 stage.

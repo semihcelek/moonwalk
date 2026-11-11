@@ -65,6 +65,35 @@ public sealed class RunEngine
 
     public Run Start(string brief, string projectName, IReadOnlyDictionary<string, AgentChoice>? choices = null, AutoMode? auto = null)
     {
+        var (profile, stages, stageAgents) = Prepare(projectName, choices);
+        var now = DateTimeOffset.Now;
+        var run = new Run
+        {
+            Id = $"{now:yyyyMMdd-HHmmss}-{Random.Shared.Next(0x1000, 0xFFFF):x}",
+            Project = profile.Name,
+            Brief = brief,
+            Title = MakeTitle(brief),
+            Agent = profile.IsDemo ? null : profile.Agent,
+            StageAgents = stageAgents,
+            Auto = new AutoMode { Plan = (auto ?? profile.Auto).Plan, Implementation = (auto ?? profile.Auto).Implementation },
+            CreatedAt = now,
+            Stages = stages.Select(s => new StageRecord { Name = s.Name }).ToList(),
+        };
+        _store.Add(run);
+
+        var control = new RunControl(new CancellationTokenSource(), stages.Select(s => s.Name).ToList());
+        _controls[run.Id] = control;
+        _ = Task.Run(() => ExecuteAsync(run.Id, brief, profile, stages, control, recover: false));
+        return run;
+    }
+
+    /// <summary>Throws an <see cref="ArgumentException"/> saying what is wrong when a run could not start with these choices. Used to check a whole batch up front.</summary>
+    public void Validate(string projectName, IReadOnlyDictionary<string, AgentChoice>? choices) => Prepare(projectName, choices);
+
+    /// <summary>The project, its stage list and the validated per-stage choices (only the stages that actually have one).</summary>
+    private (ProjectProfile Profile, IReadOnlyList<IStage> Stages, Dictionary<string, AgentChoice> StageAgents) Prepare(
+        string projectName, IReadOnlyDictionary<string, AgentChoice>? choices)
+    {
         var entry = _projects.Get(projectName) ?? throw new ArgumentException($"Unknown project '{projectName}'.");
         if (!entry.IsValid)
         {
@@ -94,25 +123,7 @@ public sealed class RunEngine
                 stageAgents[stageName] = choice;
             }
         }
-        var now = DateTimeOffset.Now;
-        var run = new Run
-        {
-            Id = $"{now:yyyyMMdd-HHmmss}-{Random.Shared.Next(0x1000, 0xFFFF):x}",
-            Project = profile.Name,
-            Brief = brief,
-            Title = MakeTitle(brief),
-            Agent = profile.IsDemo ? null : profile.Agent,
-            StageAgents = stageAgents,
-            Auto = new AutoMode { Plan = (auto ?? profile.Auto).Plan, Implementation = (auto ?? profile.Auto).Implementation },
-            CreatedAt = now,
-            Stages = stages.Select(s => new StageRecord { Name = s.Name }).ToList(),
-        };
-        _store.Add(run);
-
-        var control = new RunControl(new CancellationTokenSource(), stages.Select(s => s.Name).ToList());
-        _controls[run.Id] = control;
-        _ = Task.Run(() => ExecuteAsync(run.Id, brief, profile, stages, control, recover: false));
-        return run;
+        return (profile, stages, stageAgents);
     }
 
     /// <summary>The agent for one stage: the run's choice for that stage (agent, model, effort) over the project's defaults.</summary>

@@ -30,6 +30,11 @@
   <dialog id="newRun">
     <form method="dialog" id="newRunForm" class="modal">
       <h2>New run</h2>
+      <div class="mode-switch" id="runMode" role="tablist" aria-label="Kind of run">
+        <button type="button" data-mode="single" class="active" title="One brief, one run">Single run</button>
+        <button type="button" data-mode="queue" title="Several briefs, run one after another">Queue several</button>
+        <button type="button" data-mode="compare" title="One brief through several agent and model combinations">Compare agents</button>
+      </div>
       <label class="field">
         <span>Brief</span>
         <textarea id="brief" rows="6" placeholder="Describe the feature or fix. The spec stage turns this into acceptance criteria." required></textarea>
@@ -49,6 +54,13 @@
         <div id="stageAgentRows"></div>
         <small class="hint">Blank means the project's default. Plan with a strong model, implement with a cheaper one.</small>
       </fieldset>
+      <fieldset class="field stage-agents" id="compareBox" hidden>
+        <legend>Variants to compare</legend>
+        <div id="compareList"></div>
+        <small class="hint">Tick at least two. Each one runs the same brief with that agent, model and effort for the plan and the implementation.
+          On a branch-mode project they run one after another; on a worktree-mode project all at once.</small>
+      </fieldset>
+      <label class="check" id="stopFailBox" hidden><input type="checkbox" id="stopOnFailure"> Stop the queue at the first run that does not finish</label>
       <fieldset class="field auto-mode" id="autoMode">
         <legend>Automation</legend>
         <label class="check"><input type="checkbox" id="autoPlan"> Auto-accept the plan</label>

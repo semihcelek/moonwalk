@@ -252,12 +252,93 @@ function route() {
   teardownRunView();
   onRunsChanged = null;
   const match = location.hash.match(/^#\/run\/(.+)$/);
+  const batchMatch = location.hash.match(/^#\/batch\/(.+)$/);
   const settings = location.hash === '#/settings';
   document.getElementById('navRuns').classList.toggle('active', !match && !settings);
   document.getElementById('navSettings').classList.toggle('active', settings);
   if (match) showRun(decodeURIComponent(match[1]));
+  else if (batchMatch) showBatch(decodeURIComponent(batchMatch[1]));
   else if (settings) showSettings();
   else showBoard();
+}
+
+/* ------------------------------------------------------------------ batches */
+
+const batchLink = (id, text) => h('a', { class: 'batch-chip', href: `#/batch/${encodeURIComponent(id)}` }, text);
+
+let batchStamp = 0;
+
+/** The most recent batches as chips on the board. */
+async function loadBatches(strip, force = false) {
+  if (!force && Date.now() - batchStamp < 3000) return;
+  batchStamp = Date.now();
+  try {
+    const all = await api('/api/batches');
+    put(strip, all.slice(0, 4).map((b) => {
+      const done = b.items.filter((i) => !['Pending', 'Running'].includes(i.status)).length;
+      return batchLink(b.id, `${b.kind === 'compare' ? 'Comparison' : 'Queue'}: ${b.name} · ${done}/${b.items.length} · ${b.status}`);
+    }));
+  } catch { /* optional */ }
+}
+
+async function showBatch(id) {
+  const head = h('div', { class: 'page-head' });
+  const body = h('div', {});
+  view.replaceChildren(h('div', { class: 'run-head' }, h('a', { class: 'back', href: '#/' }, '← Runs')), head, body);
+  let stamp = 0;
+
+  const render = async (force) => {
+    if (!force && Date.now() - stamp < 2000) return;
+    stamp = Date.now();
+    let data;
+    try { data = await api(`/api/batches/${encodeURIComponent(id)}`); }
+    catch { put(body, h('div', { class: 'empty' }, h('strong', {}, 'Batch not found'))); return; }
+    const { batch, rows } = data;
+    const running = batch.status === 'Running';
+    const compare = batch.kind === 'compare';
+    put(head,
+      h('h1', {}, batch.name),
+      h('span', { class: 'pill ' + (running ? 's-running' : batch.status === 'Done' ? 's-done' : 's-cancelled') }, batch.status),
+      h('span', { class: 'sub' }, `${compare ? 'comparison' : 'queue'} · project ${batch.project}${batch.parallel ? ' · parallel (worktrees)' : ' · one at a time'}`),
+      running && h('button', { class: 'btn danger small', type: 'button', onclick: () => attempt(() => post(`/api/batches/${encodeURIComponent(id)}/cancel`)) }, 'Cancel batch'));
+
+    const finished = rows.filter((r) => r.status === 'Done' && r.run);
+    const costOf = (r) => (r.run?.costUsd ?? Infinity);
+    const timeOf = (r) => r.run?.finishedAt ? new Date(r.run.finishedAt) - new Date(r.run.createdAt) : Infinity;
+    const best = (fn) => finished.length > 1 ? finished.reduce((a, b) => (fn(b) < fn(a) ? b : a)) : null;
+    const cheapest = best(costOf);
+    const fastest = best(timeOf);
+
+    const cell = (text, cls) => h('td', { class: cls }, text);
+    const header = compare
+      ? ['Variant', 'Agents and models', 'Status', 'Time', 'Tokens', 'Cost', 'Changed', '']
+      : ['#', 'Brief', 'Status', 'Time', 'Tokens', 'Cost', ''];
+    put(body, h('table', { class: 'batch-table' },
+      h('thead', {}, h('tr', {}, header.map((x) => h('th', {}, x)))),
+      h('tbody', {}, rows.map((r) => {
+        const run = r.run;
+        const t = run ? totals(run) : null;
+        const models = t ? t.models.join(', ') : '';
+        const status = r.status === 'Running' && run ? run.status : r.status;
+        const common = [
+          h('td', {}, h('span', { class: `pill s-${status.toLowerCase()}` }, STATUS_LABEL[status] ?? status)),
+          cell(run ? fmtDuration((run.finishedAt ? new Date(run.finishedAt) : new Date()) - new Date(run.createdAt)) : '', fastest === r ? 'best' : ''),
+          cell(t?.tokens ? fmtTokens(t.tokens) : '', ''),
+          cell(t?.hasCost ? fmtUsd(t.cost) : '', cheapest === r ? 'best' : ''),
+        ];
+        const link = r.runId ? h('td', {}, h('a', { href: `#/run/${encodeURIComponent(r.runId)}` }, 'open')) : h('td', { class: 'muted' }, r.error ?? '');
+        return compare
+          ? h('tr', {}, h('td', { class: 'label' }, r.label), h('td', {}, [run ? agentsLine(run) : '', models && ` · ${models}`].filter(Boolean).join('')),
+              ...common, cell(r.stats ? `${r.stats.files} files +${r.stats.added} -${r.stats.removed}` : '', ''), link)
+          : h('tr', {}, h('td', {}, String(r.index)), h('td', { class: 'label' }, r.label), ...common, link);
+      }))),
+      compare && finished.length > 1 && h('div', { class: 'hint' }, 'Green marks the cheapest and the fastest finished variant. Open a run, then its Changes tab, to compare what each one wrote.'));
+  };
+
+  await render(true);
+  onRunsChanged = () => render(false);
+  const timer = setInterval(() => render(true), 5000);
+  currentRunView = { close: () => clearInterval(timer) };
 }
 
 /* ---------------------------------------------------------------- settings */
@@ -323,6 +404,7 @@ async function showBoard() {
   const list = h('div', { class: 'runs' });
   const sub = h('span', { class: 'sub' });
   const strip = h('div', { class: 'usage-strip' });
+  const batchStrip = h('div', { class: 'usage-strip' });
 
   /* filters: kept in boardFilter so they survive live updates and navigating away and back */
   const search = h('input', { type: 'search', class: 'filter-q', placeholder: 'Search title, id, project or brief', value: boardFilter.q, 'aria-label': 'Search runs' });
@@ -333,7 +415,7 @@ async function showBoard() {
   const archivedBox = h('input', { type: 'checkbox', checked: boardFilter.archived });
   let projectKey = '';
   const bar = h('div', { class: 'filter-bar' }, search, statusSel, projectSel, h('label', { class: 'inline' }, archivedBox, 'Show archived'));
-  view.replaceChildren(h('div', { class: 'page-head' }, h('h1', {}, 'Runs'), sub), strip, bar, list);
+  view.replaceChildren(h('div', { class: 'page-head' }, h('h1', {}, 'Runs'), sub), strip, batchStrip, bar, list);
 
   const matches = (r) => {
     if (!boardFilter.archived && r.archived) return false;
@@ -382,7 +464,8 @@ async function showBoard() {
   }
   render();
   loadUsage(strip, true);
-  onRunsChanged = () => { render(); loadUsage(strip); };
+  loadBatches(batchStrip, true);
+  onRunsChanged = () => { render(); loadUsage(strip); loadBatches(batchStrip); };
 }
 
 const boardFilter = { q: '', status: '', project: '', archived: false };
@@ -412,7 +495,7 @@ function runRow(run) {
   return h('a', { class: `run-row${run.status === 'WaitingForHuman' ? ' attn' : ''}${run.archived ? ' archived' : ''}`, href: `#/run/${encodeURIComponent(run.id)}` },
     h('div', {}, pill(run.status)),
     h('div', {}, h('div', { class: 'title' }, run.title),
-      h('div', { class: 'meta' }, `${run.project} · ${run.id}${spend ? ' · ' + spend : ''}${run.archived ? ' · archived' : ''}`)),
+      h('div', { class: 'meta' }, `${run.project} · ${run.id}${run.batchLabel ? ' · batch ' + run.batchLabel : ''}${spend ? ' · ' + spend : ''}${run.archived ? ' · archived' : ''}`)),
     h('div', { class: 'meta hide-sm' }, stage),
     h('div', { class: 'num hide-sm' }, duration(run.createdAt, isActive(run.status) ? null : run.finishedAt ?? run.updatedAt)),
     h('div', { class: 'num hide-sm', 'data-ago': run.updatedAt }, ago(run.updatedAt)));
@@ -782,6 +865,7 @@ const projectNote = document.getElementById('projectNote');
 
 async function loadProjects() {
   const projects = await api('/api/projects');
+  currentProjects = projects;
   projectSelect.replaceChildren(...projects.map((p) =>
     h('option', { value: p.name, disabled: !p.valid, 'data-errors': (p.errors ?? []).join(' ') },
       p.valid ? p.name : `${p.name} (invalid)`)));
@@ -901,6 +985,47 @@ presetDelete.addEventListener('click', () => attempt(async () => {
   await loadPresets();
 }));
 
+/* Single run, a queue of briefs, or one brief compared across agent combinations. */
+const runModeBox = document.getElementById('runMode');
+const compareBox = document.getElementById('compareBox');
+const compareList = document.getElementById('compareList');
+const stopFailBox = document.getElementById('stopFailBox');
+const stopOnFailure = document.getElementById('stopOnFailure');
+const submitBtn = document.getElementById('newRunSubmit');
+let runMode = 'single';
+let currentProjects = [];
+
+const currentProject = () => currentProjects.find((p) => p.name === projectSelect.value);
+
+function applyMode() {
+  for (const b of runModeBox.querySelectorAll('button')) b.classList.toggle('active', b.dataset.mode === runMode);
+  compareBox.hidden = runMode !== 'compare';
+  stopFailBox.hidden = runMode !== 'queue';
+  stageAgentsBox.hidden = runMode === 'compare' || stageAgentsBox.hidden;
+  if (runMode !== 'compare') renderStageAgents(currentProject());
+  briefInput.placeholder = runMode === 'queue'
+    ? 'One brief per block. Put a line with --- between briefs.'
+    : 'Describe the feature or fix. The spec stage turns this into acceptance criteria.';
+  submitBtn.textContent = { single: 'Start run', queue: 'Start queue', compare: 'Start comparison' }[runMode];
+  if (runMode === 'compare') renderCompareList();
+}
+
+function renderCompareList() {
+  const all = [
+    { name: 'Project defaults', stages: {} },
+    ...presets.builtin, ...presets.custom,
+  ];
+  put(compareList, all.map((p) => h('label', { class: 'check' },
+    h('input', { type: 'checkbox', 'data-preset': JSON.stringify(p) }), p.name)));
+}
+
+runModeBox.addEventListener('click', (e) => {
+  const mode = e.target.closest('button')?.dataset.mode;
+  if (!mode) return;
+  runMode = mode;
+  applyMode();
+});
+
 function collectStageChoices() {
   const out = {};
   for (const [stage, refs] of Object.entries(stageSelects)) {
@@ -923,6 +1048,8 @@ function showProjectNote(projects) {
 document.getElementById('newRunBtn').addEventListener('click', async () => {
   try { await loadProjects(); } catch { /* keep whatever is listed */ }
   await loadPresets();
+  runMode = 'single';
+  applyMode();
   dialog.showModal();
   briefInput.focus();
 });
@@ -931,6 +1058,31 @@ document.getElementById('newRunForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const brief = briefInput.value.trim();
   if (!brief) return;
+  if (runMode !== 'single') {
+    try {
+      const body = { project: projectSelect.value, kind: runMode, auto: { plan: autoPlan.checked, implementation: autoImpl.checked }, stopOnFailure: stopOnFailure.checked };
+      if (runMode === 'queue') {
+        body.briefs = briefInput.value.split(/^\s*-{3,}\s*$/m).map((b) => b.trim()).filter(Boolean);
+        body.stages = collectStageChoices();
+      } else {
+        body.brief = brief;
+        const wanted = new Set(currentProject()?.stages ?? []);
+        body.variants = [...compareList.querySelectorAll('input:checked')].map((box) => {
+          const preset = JSON.parse(box.dataset.preset);
+          const stages = Object.fromEntries(Object.entries(preset.stages).filter(([stage]) => wanted.has(stage)));
+          return { label: preset.name, stages };
+        });
+        if (body.variants.length < 2) { alert('Tick at least two variants to compare.'); return; }
+      }
+      const batch = await api('/api/batches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      briefInput.value = '';
+      dialog.close();
+      location.hash = `#/batch/${encodeURIComponent(batch.id)}`;
+    } catch (err) {
+      alert(`Could not start: ${err.message}`);
+    }
+    return;
+  }
   try {
     const run = await api('/api/runs', {
       method: 'POST',

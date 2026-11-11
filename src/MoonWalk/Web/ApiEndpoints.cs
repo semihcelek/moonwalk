@@ -15,6 +15,26 @@ public sealed record SavePresetRequest(string? Name, Dictionary<string, AgentCho
 
 public static class ApiEndpoints
 {
+    /// <summary>How many files and lines a branch changed against its base, or null when git cannot compare them.</summary>
+    private static async Task<object?> DiffStatsAsync(string repo, string range, CancellationToken ct)
+    {
+        var numstat = await Git.RunAsync(repo, ct, "diff", "--numstat", "--no-renames", range);
+        if (!numstat.Ok)
+        {
+            return null;
+        }
+
+        int files = 0, added = 0, removed = 0;
+        foreach (var row in numstat.Out.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var cols = row.Split('\t');
+            files++;
+            added += cols.Length > 0 && int.TryParse(cols[0], out var a) ? a : 0;
+            removed += cols.Length > 1 && int.TryParse(cols[1], out var r) ? r : 0;
+        }
+        return new { files, added, removed };
+    }
+
     private static IResult Reply((bool Ok, string Message) result) =>
         result.Ok ? Results.Ok(new { message = result.Message }) : Results.Conflict(new { error = result.Message });
 
@@ -156,6 +176,49 @@ public static class ApiEndpoints
                 patch = truncated ? patch[..maxPatch] : patch,
                 truncated,
             }, Json.Options);
+        });
+
+        app.MapGet("/api/batches", (BatchService batches) => Results.Json(batches.List(), Json.Options));
+
+        app.MapPost("/api/batches", (BatchRequest request, BatchService batches) =>
+        {
+            try
+            {
+                return Results.Json(batches.Create(request), Json.Options, statusCode: StatusCodes.Status201Created);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
+        app.MapPost("/api/batches/{id}/cancel", (string id, BatchService batches) =>
+            batches.Cancel(id) ? Results.Ok(new { message = "Cancelling: the run in progress is cancelled and no more are started." })
+                : Results.Conflict(new { error = "That batch is not running." }));
+
+        // One batch with its runs and, for a comparison, how much each variant changed in git.
+        app.MapGet("/api/batches/{id}", async (string id, BatchService batches, RunStore store, ProjectRegistry projects, AppPaths paths, CancellationToken ct) =>
+        {
+            var batch = batches.Get(id);
+            if (batch is null)
+            {
+                return Results.NotFound();
+            }
+
+            var entry = projects.Get(batch.Project);
+            var rows = new List<object>();
+            foreach (var item in batch.Items)
+            {
+                var run = item.RunId is null ? null : store.Get(item.RunId);
+                object? stats = null;
+                if (run is not null && entry is { Profile.IsDemo: false }
+                    && WorkspaceState.Load(Path.Combine(paths.RunsRoot, run.Id)) is { Branch.Length: > 0 } state)
+                {
+                    stats = await DiffStatsAsync(entry.Profile.RepoPath, $"{state.BaseBranch}..{state.Branch}", ct);
+                }
+                rows.Add(new { item.Index, item.Label, item.Status, item.Error, item.RunId, run, stats });
+            }
+            return Results.Json(new { batch, rows }, Json.Options);
         });
 
         app.MapPost("/api/runs/{id}/archive", (string id, RunEngine engine) => Reply(engine.Archive(id, true)));

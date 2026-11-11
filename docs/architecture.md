@@ -341,6 +341,22 @@ The app sets the invariant culture at startup so dollar amounts and counts in me
   WaitingForHuman (titled by reason: Needs you, Ready for you to play, Budget reached), Done, Failed and Interrupted. A run first seen in
   a snapshot never notifies, so a page load does not fire old news. Clicking opens that run. There is no server-side push.
 
+## Batches (`BatchService`)
+
+A `Batch` is a list of `BatchItem`s (label, brief, optional per-item stage choices, `RunId`, status) saved as
+`runs/_batches/<id>.json`. `kind = "queue"` has one item per brief and shares the request's stage choices; `kind = "compare"` has one item
+per variant, the same brief, and each variant's own choices. `Create` validates everything up front (project, brief count, at least two
+variants, and `RunEngine.Validate` for every distinct choice set, which shares the code `Start` uses), then runs in the background.
+Items run **sequentially** (the service starts item *n+1* when run *n* is no longer active) except a comparison on a worktree-mode project,
+whose items all start at once. A run is "active" while it is Queued, Running, Paused or WaitingForHuman, so a non-automatic batch waits
+with its runs; with full auto nothing waits. `stopOnFailure` skips the remaining items when one does not finish `Done`. `Cancel` cancels the
+run in progress and skips the rest. Runs record `BatchId` and `BatchLabel` ("2/5 title"). At startup a `Running` batch becomes `Interrupted`
+and its unfinished items too; nothing is resumed.
+
+`GET /api/batches`, `POST /api/batches`, `POST /api/batches/{id}/cancel`, and `GET /api/batches/{id}`, which returns each item with its full run and,
+for runs with a branch, `git diff --numstat` totals (files, added, removed) against the base. The UI has a mode switch in the New run dialog, a
+`#/batch/<id>` page (a queue table, or a comparison table with the cheapest and fastest finished variant marked) and recent-batch chips on the board.
+
 ## Event types
 
 | Type | UI group | Notes |

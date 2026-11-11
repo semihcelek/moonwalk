@@ -43,7 +43,14 @@ builder.Services.AddSingleton(sp => new RunEngine(
     sp.GetRequiredService<AgentRegistry>(),
     runsRoot));
 
+builder.Services.AddSingleton(sp => new BatchService(
+    sp.GetRequiredService<RunStore>(),
+    sp.GetRequiredService<RunEngine>(),
+    sp.GetRequiredService<ProjectRegistry>(),
+    Path.Combine(paths.RunsRoot, "_batches")));
+
 var app = builder.Build();
+app.Services.GetRequiredService<BatchService>(); // load saved batches now, so interrupted ones are marked at startup
 
 app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions

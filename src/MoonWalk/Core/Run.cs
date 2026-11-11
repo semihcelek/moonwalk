@@ -112,6 +112,10 @@ public sealed class Run
     public WaitState? Waiting { get; set; }
     public bool PauseRequested { get; set; }
 
+    /// <summary>The batch that started this run, and its place in it ("2/5 title"), when it came from a queue or a comparison.</summary>
+    public string? BatchId { get; set; }
+    public string? BatchLabel { get; set; }
+
     /// <summary>What this run may decide for itself. Set at start from the dialog or the project's default.</summary>
     public AutoMode Auto { get; set; } = new();
 
