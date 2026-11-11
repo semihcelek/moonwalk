@@ -125,6 +125,17 @@ into the feed as `System` events and is saved as `evidence/verify.log`. The firs
 Writes `handover.md` (branch, stage results, commits and diff stat against the base branch, guidance given, what to do next) and
 returns `NeedsHuman`, so the run waits for you to play the result with the repository on the run branch.
 
+For Unity projects it first runs `UnityMeta` (on when the profile has `commitMetaFiles: true`, or when it is unset and the work folder
+has `Assets` and `ProjectSettings`; `false` switches it off). Unity writes a `.meta` (the asset's GUID) only when the Editor imports a
+file, so a script an agent added is committed without one, and scenes referring to it break after a merge. `UnityMeta` takes the new
+`.meta` files that appeared during the run (`GetChangesAsync`, so files that were already untracked at the start stay alone), keeps
+those whose asset is tracked in git and that are not tracked themselves, checks them against the guards, and commits them as
+`chore: add Unity .meta files` (a guard violation is a warning, not a failure). Other files the Editor touched are never committed
+here. It then lists files added under `Assets` or `Packages` (`git diff --diff-filter=A base...HEAD`, skipping what Unity ignores:
+dot and `~` names) that still have no `.meta` in HEAD, as a `Warning` event and a "Unity .meta files missing" section in
+`handover.md`. MoonWalk does not write `.meta` files itself (a made-up GUID could differ from the one the Editor would pick); open
+the project so the Editor imports the files, then **Retry** from Handover to commit them.
+
 ### IntegrateStage
 
 The Unity step after Implement. An agent with the unity-mcp tools reads the Console and waits for compilation (fixing any `error CS`),
@@ -487,5 +498,5 @@ Exercised against a throwaway repo with the real `claude` CLI:
 ## Not built yet
 
 Phone or other push notifications (browser notifications only), a playtest stage, and the rest of the improvement plan (Unity compile
-check and `.meta` commit, brief templates, task queue, branch hygiene, compare). Verified for the safety work: an agent that commits within the guards, one whose own commit breaks them,
+check, brief templates, task queue, branch hygiene, compare). Verified for the safety work: an agent that commits within the guards, one whose own commit breaks them,
 one that pushes to a bare origin, a plain agent as control, and an agent process that was gone 3 seconds after MoonWalk was hard-killed.

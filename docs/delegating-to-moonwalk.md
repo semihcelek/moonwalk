@@ -14,7 +14,8 @@ Each brief becomes one **run**. A run goes through stages, each done by an agent
    paths, size limits) and commits it. The agent cannot commit, push or merge.
 3. **Integrate** (Unity projects only, optional): an agent wires the change into the scene through the Unity editor.
 4. **Verify** (optional): the project's own commands (compile, tests) run.
-5. **Handover**: the run waits for the person to play it, unless auto mode is on.
+5. **Handover**: the run waits for the person to play it, unless auto mode is on. In a Unity project it first commits the `.meta` files
+   the Editor created during the run, and `handover.md` lists new files that still have none (the person opens the project, then retries Handover).
 
 Every run starts from the project's **base branch**, on its own branch, independently of every other run. Nothing is pushed. Finished runs can
 be merged into one **review branch** (`waiting-review` by default) so the person can test several results with a single checkout.

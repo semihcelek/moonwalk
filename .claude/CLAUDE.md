@@ -126,12 +126,11 @@ If asked to add tests, ask whether they should live in the repo (for example `to
 Built: agents (Claude, agy, Muse, generic CLI) with live events and health checks; branch and worktree workspaces; Spec, Implement, Integrate,
 Verify, Handover; gates, retry, pause, guidance, recovery of interrupted runs; guards; per-stage model and effort with presets; usage ledger
 and budgets; Changes tab, images, board filters, archive and delete, grouped feed, browser notifications; auto modes; batches (queue and
-compare); brief templates; branch cleanup; review branch; the delegation guide.
+compare); brief templates; branch cleanup; review branch; the delegation guide; Unity `.meta` commit before Handover (`UnityMeta`, tested with a fake agent only, not against a real Editor).
 
 Left, in rough order (see "Not built yet" in `docs/architecture.md`):
 1. **Unity compile check** for Verify: spike whether MoonWalk can call unity-mcp over HTTP (`http://127.0.0.1:8080/mcp`: refresh, wait for
    compile, read console errors), else scan `Editor.log` for `error CS`. Needs the user's Editor open.
-2. **Commit generated `.meta` files** for new Unity scripts before Handover.
-3. **Playtest stage**: spike first whether Autopilot (`ramenvr/autopilot`), `unity-cli-loop` or unity-mcp play mode can drive a VR rig; the stage
+2. **Playtest stage**: spike first whether Autopilot (`ramenvr/autopilot`), `unity-cli-loop` or unity-mcp play mode can drive a VR rig; the stage
    would score the Spec's acceptance criteria and save screenshots as image artifacts (the artifact path already exists).
-4. Move the end-to-end scripts into the repo (`tools/e2e/`) if the user agrees.
+3. Move the end-to-end scripts into the repo (`tools/e2e/`) if the user agrees.

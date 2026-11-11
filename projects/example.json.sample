@@ -25,6 +25,10 @@
   // never treated as the agent's work and never committed. Without this, such a file makes a run Blocked.
   "ignorePaths": [],
 
+  // Unity: before Handover, commit the .meta files the Editor created during the run. On by default when the folder has Assets and
+  // ProjectSettings; set false to switch off.
+  // "commitMetaFiles": true,
+
   // "claude", "agy" (Gemini via Antigravity), "muse" (Muse Code), or any agent defined in agents.json.
   "agent": "claude",
 

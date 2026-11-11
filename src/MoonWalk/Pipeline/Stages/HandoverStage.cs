@@ -17,6 +17,12 @@ public sealed class HandoverStage : IStage
         var run = context.GetRun();
         var state = workspace.State;
 
+        MetaReport? meta = null;
+        if (UnityMeta.Applies(context))
+        {
+            meta = await UnityMeta.CommitAsync(context, workspace, ct);
+        }
+
         var info = await workspace.Workspace.GetHandoverInfoAsync(state, ct);
 
         var sb = new StringBuilder();
@@ -57,6 +63,17 @@ public sealed class HandoverStage : IStage
         sb.AppendLine("```");
         sb.AppendLine(string.IsNullOrWhiteSpace(info.DiffStat) ? "(no changes against the base branch)" : info.DiffStat.TrimEnd());
         sb.AppendLine("```");
+
+        if (meta is { Missing.Count: > 0 })
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Unity .meta files missing");
+            sb.AppendLine("These new files have no committed .meta, so Unity will give them new GUIDs and scene references to them can break after a merge. Unity writes the .meta when the Editor imports the file: open the project, then **Retry** from Handover and MoonWalk commits them.");
+            foreach (var path in meta.Missing.Take(30))
+            {
+                sb.AppendLine($"- `{path}`");
+            }
+        }
 
         if (run?.Guidance.Count > 0)
         {

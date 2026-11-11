@@ -155,6 +155,12 @@ public sealed class ProjectProfile
     /// </summary>
     public string[] IgnorePaths { get; set; } = [];
 
+    /// <summary>
+    /// Before Handover, commit the Unity .meta files that appeared during the run (their assets are already committed). Null: on when the
+    /// folder looks like a Unity project (Assets and ProjectSettings). Set false to switch off.
+    /// </summary>
+    public bool? CommitMetaFiles { get; set; }
+
     public string Agent { get; set; } = "claude";
 
     public string[] Stages { get; set; } = ["Implement"];

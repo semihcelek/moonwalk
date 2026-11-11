@@ -78,7 +78,10 @@ Notes:
 4. **Implement**: the agent works on the branch and cannot commit or push. MoonWalk checks what changed against the
    guards and commits only those files.
 5. **Verify**: runs your commands (compile, lint, tests) and saves the output as evidence.
-6. **Handover**: writes `handover.md` and waits for you. The repository stays on the run branch so you can play it.
+6. **Handover**: writes `handover.md` and waits for you. The repository stays on the run branch so you can play it. In a Unity
+   project it first commits the `.meta` files the Editor created during the run (they hold the asset GUIDs that scenes refer to) and
+   lists new files that still have none; open the project and **Retry** from Handover to commit those. `commitMetaFiles: false` in
+   the profile switches this off.
 7. You **approve**, or **retry** from any stage with a note ("jump feels floaty"), or **stop**. After approving, press
    **Release workspace** to switch back to the branch you were on.
 8. On failure or stop, partial work is kept as a local `wip(moonwalk)` commit on the run branch, the repository is
