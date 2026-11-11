@@ -135,6 +135,15 @@ public sealed class ProjectProfile
 
     public string BaseBranch { get; set; } = "main";
 
+    /// <summary>
+    /// The branch finished runs can be merged into, so several results can be tested together with one checkout. Created from the base
+    /// branch on the first merge. Never a <c>moonwalk/</c> name and never the base branch itself.
+    /// </summary>
+    public string ReviewBranch { get; set; } = "waiting-review";
+
+    /// <summary>Facts for whoever writes briefs for this project (a person or a main agent): shown in the delegation guide, not sent to run agents.</summary>
+    public string[] BriefingNotes { get; set; } = [];
+
     public WorkspaceMode Workspace { get; set; } = WorkspaceMode.Branch;
 
     public DirtyPolicy DirtyPolicy { get; set; } = DirtyPolicy.Refuse;

@@ -69,6 +69,9 @@ public sealed class AutoMode
     public bool Plan { get; set; }
     public bool Implementation { get; set; }
 
+    /// <summary>After a run finishes Done, also merge its branch into the project's review branch (a conflict leaves it unmerged and says so).</summary>
+    public bool MergeToReview { get; set; }
+
     public bool Full => Plan && Implementation;
     public bool Any => Plan || Implementation;
 }
@@ -118,6 +121,11 @@ public sealed class Run
 
     /// <summary>What this run may decide for itself. Set at start from the dialog or the project's default.</summary>
     public AutoMode Auto { get; set; } = new();
+
+    /// <summary>Set when this run's branch was merged into the project's review branch: when, which branch, and the merge commit.</summary>
+    public DateTimeOffset? ReviewMergedAt { get; set; }
+    public string? ReviewBranch { get; set; }
+    public string? ReviewCommit { get; set; }
 
     /// <summary>Hidden from the board unless "show archived" is on. Only finished runs can be archived.</summary>
     public bool Archived { get; set; }

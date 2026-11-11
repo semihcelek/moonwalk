@@ -2,6 +2,7 @@ using MoonWalk.Agents;
 using MoonWalk.Core;
 using MoonWalk.Projects;
 using MoonWalk.Web;
+using MoonWalk.Workspace;
 
 // Dollar amounts and token counts in messages must read the same on every machine (no decimal commas).
 System.Globalization.CultureInfo.DefaultThreadCurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
@@ -37,11 +38,16 @@ builder.Services.AddSingleton(agents);
 builder.Services.AddSingleton(registry);
 builder.Services.AddSingleton(new EventHub(runsRoot));
 builder.Services.AddSingleton(new RunStore(runsRoot));
+builder.Services.AddSingleton(sp => new ReviewService(
+    sp.GetRequiredService<ProjectRegistry>(),
+    sp.GetRequiredService<RunStore>(),
+    sp.GetRequiredService<EventHub>()));
 builder.Services.AddSingleton(sp => new RunEngine(
     sp.GetRequiredService<RunStore>(),
     sp.GetRequiredService<EventHub>(),
     sp.GetRequiredService<ProjectRegistry>(),
     sp.GetRequiredService<AgentRegistry>(),
+    sp.GetRequiredService<ReviewService>(),
     runsRoot));
 
 builder.Services.AddSingleton(sp => new BatchService(

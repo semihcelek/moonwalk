@@ -67,6 +67,11 @@ public static class ApiEndpoints
         return null;
     }
 
+    private static IResult ReviewReply(ReviewResult result) =>
+        result.Ok
+            ? Results.Json(new { message = result.Message, commit = result.Commit }, Json.Options)
+            : Results.Json(new { error = result.Message, conflicts = result.Conflicts }, Json.Options, statusCode: StatusCodes.Status409Conflict);
+
     private static IResult Reply((bool Ok, string Message) result) =>
         result.Ok ? Results.Ok(new { message = result.Message }) : Results.Conflict(new { error = result.Message });
 
@@ -209,6 +214,27 @@ public static class ApiEndpoints
                 truncated,
             }, Json.Options);
         });
+
+        // The review branch: finished runs merged into one branch, tested with a single checkout.
+        app.MapGet("/api/review", async (string? project, ReviewService review, CancellationToken ct) =>
+            await review.StatusAsync(project ?? "", ct) is { } status
+                ? Results.Json(status, Json.Options)
+                : Results.BadRequest(new { error = "Choose a project that has a repository." }));
+
+        app.MapPost("/api/runs/{id}/merge-review", async (string id, ReviewService review, CancellationToken ct) =>
+            ReviewReply(await review.MergeRunAsync(id, ct)));
+
+        app.MapPost("/api/review/checkout", async (BranchRequest request, ReviewService review, CancellationToken ct) =>
+            ReviewReply(await review.CheckoutAsync(request.Project ?? "", ct)));
+
+        app.MapPost("/api/review/reset", async (BranchRequest request, ReviewService review, CancellationToken ct) =>
+            ReviewReply(await review.ResetAsync(request.Project ?? "", ct)));
+
+        // The guide a main agent reads before writing briefs, with this installation's real project, agent and model names filled in.
+        app.MapGet("/api/guide", (HttpContext context, ProjectRegistry projects, PresetStore presets, string? project) =>
+            Results.Text(
+                GuideBuilder.Build($"{context.Request.Scheme}://{context.Request.Host}", projects, presets, project),
+                "text/markdown; charset=utf-8"));
 
         app.MapGet("/api/briefs", (BriefStore briefs) => Results.Json(briefs.List(), Json.Options));
 

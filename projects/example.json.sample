@@ -5,6 +5,13 @@
   "repoPath": "C:\\Users\\me\\Projects\\MyGame",
   "baseBranch": "develop",
 
+  // Finished runs can be merged into this branch (button on a run, or "mergeToReview" under "auto") so several results are tested with
+  // one checkout. Created from the base branch on the first merge. Must not start with "moonwalk/".
+  "reviewBranch": "waiting-review",
+
+  // Facts for whoever writes briefs for this project (a person or a main agent). Shown in the delegation guide at /api/guide, not sent to run agents.
+  "briefingNotes": [],
+
   // "branch": work on a run branch inside repoPath (no second checkout; best for Unity). One run per project at a time.
   // "worktree": give each run its own git worktree folder so runs can go in parallel and your folder is never touched.
   //             For Unity a new folder means a full import before you can open it. Uses worktreeRoot below.
@@ -43,7 +50,8 @@
 
   // Default automation for runs of this project (the New run dialog can change it per run). "plan" approves the gates after a stage;
   // "implementation" approves the final review and releases the workspace. With both on, a failed stage or a passed budget stops the run.
-  "auto": { "plan": false, "implementation": false },
+  // "mergeToReview" also merges each finished run into the review branch.
+  "auto": { "plan": false, "implementation": false, "mergeToReview": false },
 
   // Optional spending limits for one run. When one is passed after a stage, the run waits for you (continue, retry or stop).
   // Claude is also capped inside each stage by the remaining dollars. Only Claude reports dollars; the others report tokens.

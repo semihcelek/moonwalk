@@ -151,6 +151,32 @@ The whole batch is checked before anything starts (unknown stage, agent or model
 show as chips on the board. **Cancel batch** cancels the run in progress and skips the rest. If MoonWalk stops mid-batch, the batch
 comes back as Interrupted and its remaining runs are not started; the runs already started are recovered like any other.
 
+### Testing several results together: the review branch
+
+Every run is on its own branch, so testing three results would mean three checkouts. Instead, on a finished (Done) run press **Merge into
+review branch**: MoonWalk merges that run's branch into the project's `waiting-review` branch (the profile's `reviewBranch`, created from the
+base branch the first time). Then check out `waiting-review` once and test everything together.
+
+- **Your working folder is not touched by a merge**, so it is safe while a run holds the repository on its own branch. (If `waiting-review`
+  is the branch checked out right now, a normal merge is used instead, and only when there are no uncommitted changes.)
+- **Conflicts change nothing.** If a run's changes clash with what is already in the review branch, you get the list of files and the
+  branch stays as it was. Merge the other run first, or test them separately.
+- A merged run shows an *in waiting-review* tag. Merging it again says it is already there.
+- **Settings > Review branch** shows what is in it, with **Check out for testing** (refused while a run is using the repository) and
+  **Reset to base** (starts a new round: the branch goes back to the base, the runs' own branches stay; refused while it is checked out).
+- For unattended batches, tick **Merge each finished run into the review branch** (or set `auto.mergeToReview`): every run that finishes Done
+  is merged as it completes, and one that conflicts stays unmerged with a warning in its feed.
+
+### Delegating with your main agents
+
+**Settings > For your main agents > Copy the guide** (also served at `/api/guide`, or `/api/guide?project=<name>` for one project) gives
+your main agent everything it needs to turn a goal into briefs and queue them: how a run works, how to write a brief the run agents can
+finish alone (short, one concern, outcome not steps, independent of the other briefs), the queue format (`---` between briefs) and the
+`POST /api/batches` request, which models and efforts exist, what each auto setting does, and how to read results. It is filled with this
+installation's real project, agent and model names, plus the project's `briefingNotes` (facts for brief writers) and the rules its run agents
+already follow. The main agent answers with the split, a `moonwalk-queue` block and the request body, and waits for you to say go. The
+template is `docs/delegating-to-moonwalk.md`.
+
 ### Brief templates
 
 Above the brief box, **Save as template** keeps the current brief under a name (a markdown file in `briefs/`, git-ignored) and the

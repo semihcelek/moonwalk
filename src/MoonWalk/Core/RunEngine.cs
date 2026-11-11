@@ -38,13 +38,15 @@ public sealed class RunEngine
     private readonly EventHub _hub;
     private readonly ProjectRegistry _projects;
     private readonly AgentRegistry _agents;
+    private readonly ReviewService _review;
     private readonly string _runsRoot;
     private readonly ConcurrentDictionary<string, RunControl> _controls = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _holders = new(StringComparer.OrdinalIgnoreCase);
 
-    public RunEngine(RunStore store, EventHub hub, ProjectRegistry projects, AgentRegistry agents, string runsRoot)
+    public RunEngine(RunStore store, EventHub hub, ProjectRegistry projects, AgentRegistry agents, ReviewService review, string runsRoot)
     {
+        _review = review;
         _store = store;
         _hub = hub;
         _projects = projects;
@@ -75,7 +77,12 @@ public sealed class RunEngine
             Title = MakeTitle(brief),
             Agent = profile.IsDemo ? null : profile.Agent,
             StageAgents = stageAgents,
-            Auto = new AutoMode { Plan = (auto ?? profile.Auto).Plan, Implementation = (auto ?? profile.Auto).Implementation },
+            Auto = new AutoMode
+            {
+                Plan = (auto ?? profile.Auto).Plan,
+                Implementation = (auto ?? profile.Auto).Implementation,
+                MergeToReview = (auto ?? profile.Auto).MergeToReview,
+            },
             CreatedAt = now,
             Stages = stages.Select(s => new StageRecord { Name = s.Name }).ToList(),
         };
@@ -753,6 +760,14 @@ public sealed class RunEngine
             {
                 _hub.Append(id, EventTypes.Warning, null, $"Auto mode could not release the workspace: {message}");
             }
+        }
+
+        // Optionally collect the result in the review branch. A conflict leaves the run unmerged and says why.
+        if (status == RunStatus.Done && _store.Get(id) is { Auto.MergeToReview: true })
+        {
+            var merged = await _review.MergeRunAsync(id, CancellationToken.None);
+            _hub.Append(id, merged.Ok ? EventTypes.System : EventTypes.Warning, null,
+                merged.Ok ? $"Auto mode: {merged.Message}" : $"Auto mode could not merge into the review branch: {merged.Message}");
         }
     }
 

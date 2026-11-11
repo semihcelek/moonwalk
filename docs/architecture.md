@@ -371,6 +371,33 @@ branch is kept when it is checked out in the repository or a worktree, or when i
 reason). Only `moonwalk/*` names are accepted. An unmerged branch needs `force`. The delete itself uses `git branch -D` after MoonWalk's own
 merged-into-base check, because `-d` judges "merged" against whatever happens to be checked out and refused branches that were merged into the base.
 
+## Review branch (`ReviewService`)
+
+`ProjectProfile.ReviewBranch` (default `waiting-review`; validated: letters, digits, `.`, `_`, `-`, `/`, at most 60 characters, not under
+`moonwalk/`, not the base branch). `MergeRunAsync(runId)` takes a `Done` run and merges its branch into the review branch under a
+per-repository lock: the review branch is created from the base if missing; a branch already contained in it is reported as already
+merged; otherwise **`git merge-tree --write-tree --name-only --no-messages <review> <branch>`** computes the result without touching any
+checkout. Exit 1 means conflicts: the file names are returned (HTTP 409) and nothing is written. On success `commit-tree` writes a merge
+commit with both parents (message `Merge moonwalk/<run>-... into <review>`, trailer `MoonWalk-Run`) and `update-ref` moves the branch with the
+old tip as a guard, so a concurrent change fails instead of being overwritten. The run records `ReviewMergedAt`, `ReviewBranch` and
+`ReviewCommit`. If the review branch is the one checked out, a ref update would leave the working folder out of sync, so a real
+`git merge --no-ff` is used instead, only when `git status` shows no changes to tracked files, and a conflict is aborted.
+
+`CheckoutAsync` switches the repository to the review branch and is refused while any run of the project is active or holds the workspace
+(git itself refuses if local changes would be overwritten). `ResetAsync` runs `git branch -f <review> <base>` (refused while it is checked
+out) and clears the merge marks of the project's runs. `StatusAsync` lists the first-parent merges with their run ids.
+`AutoMode.MergeToReview` merges a run right after it finishes Done (after the automatic release); a conflict is a Warning event and the run stays Done.
+
+API: `GET /api/review?project=`, `POST /api/runs/{id}/merge-review`, `POST /api/review/checkout`, `POST /api/review/reset`.
+
+## Delegation guide (`GuideBuilder`)
+
+`docs/delegating-to-moonwalk.md` is embedded in the app (`EmbeddedResource`) and served by `GET /api/guide[?project=]` as markdown. Placeholders
+are filled at request time: `{{base_url}}` from the request, `{{models}}` from `ModelCatalog`, `{{presets}}` from the built-in and saved presets,
+and `{{projects}}` from the ready, non-demo projects (a table of stages, default agent, workspace, base and review branch and auto default, then per
+project the `briefingNotes` and `extraInstructions`). It tells a main agent how to write briefs, the queue format and `POST /api/batches` body, the
+automation flags, and how to follow results, and to answer with a split, a `moonwalk-queue` block, settings and the request body, without submitting.
+
 ## Event types
 
 | Type | UI group | Notes |

@@ -118,6 +118,15 @@ public sealed class ProjectRegistry(string projectsDir, AgentRegistry agents)
             errors.Add("baseBranch is required.");
         }
 
+        if (!MoonWalk.Workspace.ReviewService.ValidBranchName(p.ReviewBranch))
+        {
+            errors.Add($"reviewBranch '{p.ReviewBranch}' is not a usable branch name (letters, digits, '.', '_', '-', '/'; not under 'moonwalk/').");
+        }
+        else if (string.Equals(p.ReviewBranch, p.BaseBranch, StringComparison.Ordinal))
+        {
+            errors.Add("reviewBranch must differ from baseBranch.");
+        }
+
         if (!agents.IsKnown(p.Agent))
         {
             errors.Add($"Unknown agent '{p.Agent}'. Known: {string.Join(", ", agents.Names)}.");

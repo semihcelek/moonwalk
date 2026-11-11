@@ -7,4 +7,9 @@
     <RootNamespace>MoonWalk</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- The delegation guide is edited in docs/ and served, filled with live names, by GET /api/guide. -->
+    <EmbeddedResource Include="..\..\docs\delegating-to-moonwalk.md" LogicalName="delegating-to-moonwalk.md" />
+  </ItemGroup>
+
 </Project>

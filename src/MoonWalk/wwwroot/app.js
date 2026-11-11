@@ -417,7 +417,34 @@ async function showSettings() {
       put(branchesBox, h('div', { class: 'error-box' }, `Could not list branches: ${err.message}`));
     }
   };
-  branchProject.addEventListener('change', loadBranches);
+  /* The review branch: finished runs merged into one branch so they can be tested with a single checkout. */
+  const reviewBox = h('div', { class: 'card' });
+  const loadReview = async () => {
+    if (!branchProject.value) { put(reviewBox, h('div', { class: 'hint' }, 'No project with a repository.')); return; }
+    try {
+      const s = await api(`/api/review?project=${encodeURIComponent(branchProject.value)}`);
+      put(reviewBox,
+        h('div', { class: 'card-head' }, h('b', {}, s.branch), h('span', { class: 'muted' }, `review branch · base ${s.baseBranch}`),
+          s.exists ? (s.current ? h('span', { class: 'pill s-running' }, 'checked out') : h('span', { class: 'pill s-done' }, `${s.ahead} commit(s) ahead`)) : h('span', { class: 'pill s-cancelled' }, 'not created yet')),
+        s.merges.length
+          ? h('div', { class: 'notes' }, s.merges.map((m) => h('div', { class: 'note' }, h('span', { class: 'note-t' }, `${m.sha}${m.date ? ' · ' + new Date(m.date).toLocaleString() : ''}`), m.subject.replace(/^Merge /, ''))))
+          : h('div', { class: 'card-line faint' }, s.exists ? 'Nothing merged into it yet.' : 'Use "Merge into review branch" on a finished run to create it.'),
+        h('div', { class: 'decision-row' },
+          h('button', { class: 'btn primary small', type: 'button', disabled: !s.exists || s.current, onclick: () => attempt(async () => {
+            if (!confirm(`Switch the repository to ${s.branch}?\n\nYour working folder changes to that branch (Unity will reimport what differs).`)) return;
+            alert((await post('/api/review/checkout', { project: branchProject.value })).message);
+            await loadReview();
+          }) }, 'Check out for testing'),
+          h('button', { class: 'btn danger small', type: 'button', disabled: !s.exists || s.current, onclick: () => attempt(async () => {
+            if (!confirm(`Reset ${s.branch} to ${s.baseBranch}?\n\nEverything merged into it is removed from this branch (the runs' own branches stay). Use this to start a new round of testing.`)) return;
+            alert((await post('/api/review/reset', { project: branchProject.value })).message);
+            await loadReview();
+          }) }, 'Reset to base')));
+    } catch (err) {
+      put(reviewBox, h('div', { class: 'error-box' }, `Could not read the review branch: ${err.message}`));
+    }
+  };
+  branchProject.addEventListener('change', () => { loadBranches(); loadReview(); });
   const branchTools = h('div', { class: 'filter-bar' }, branchProject,
     h('button', { class: 'btn small', type: 'button', onclick: loadBranches }, 'Refresh'),
     h('button', { class: 'btn small', type: 'button', onclick: () => attempt(async () => {
@@ -430,14 +457,25 @@ async function showSettings() {
 
   view.replaceChildren(
     h('div', { class: 'page-head' }, h('h1', {}, 'Settings'), reload),
+    h('h2', { class: 'section-title' }, 'For your main agents'),
+    h('div', { class: 'card' },
+      h('div', { class: 'card-line' }, 'A guide your main agents read before they write briefs and queue them: how MoonWalk works, how to write a good brief, the queue format, and the real project, agent and model names from this installation.'),
+      h('div', { class: 'decision-row' },
+        h('button', { class: 'btn primary small', type: 'button', onclick: () => attempt(async () => {
+          const text = await (await fetch('/api/guide')).text();
+          await navigator.clipboard.writeText(text);
+          alert('The guide is on your clipboard. Paste it into your main agent (or point it at ' + location.origin + '/api/guide).');
+        }) }, 'Copy the guide'),
+        h('a', { class: 'btn small', href: '/api/guide', target: '_blank', rel: 'noopener' }, 'Open it'))),
     h('h2', { class: 'section-title' }, 'Agents'), notes, agentsBox,
     h('h2', { class: 'section-title' }, 'Projects'), projectsBox,
-    h('h2', { class: 'section-title' }, 'Branches left by runs'), branchTools, branchesBox);
+    h('h2', { class: 'section-title' }, 'Review branch and branches left by runs'), branchTools, reviewBox, h('div', { class: 'spacer-sm' }), branchesBox);
   load();
   api('/api/projects').then((all) => {
     const real = all.filter((p) => p.valid && p.name !== 'demo');
     put(branchProject, real.map((p) => h('option', { value: p.name }, p.name)));
     loadBranches();
+    loadReview();
   }).catch(() => {});
 }
 
@@ -739,6 +777,10 @@ async function showRun(id) {
         h('button', { class: 'btn primary small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/resume`)) }, r.status === 'Paused' ? 'Resume' : 'Cancel pause'),
       r.status === 'Interrupted' && h('button', { class: 'btn primary small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/recover`)) }, 'Recover run'),
       live && h('button', { class: 'btn danger small', type: 'button', onclick: () => cancelRun(r.id) }, 'Cancel run'),
+      r.status === 'Done' && r.branch && !r.reviewMergedAt && h('button', {
+        class: 'btn primary small', type: 'button', title: 'Merge this branch into the project\'s review branch, without touching your working folder',
+        onclick: () => attempt(async () => { const res = await post(`/api/runs/${encodeURIComponent(r.id)}/merge-review`); alert(res.message); }),
+      }, 'Merge into review branch'),
       !live && h('button', { class: 'btn small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/${r.archived ? 'unarchive' : 'archive'}`)) }, r.archived ? 'Unarchive' : 'Archive'),
       !live && !r.workspaceHeld && h('button', { class: 'btn danger small', type: 'button', onclick: () => deleteRun(r) }, 'Delete'));
     guidanceBox.hidden = !live;
@@ -750,6 +792,7 @@ async function showRun(id) {
       h('span', {}, 'Project ', h('b', {}, r.project)),
       h('span', {}, 'Run ', h('b', {}, r.id)),
       agentsLine(r) && h('span', {}, 'Agents ', h('b', {}, agentsLine(r))),
+      r.reviewMergedAt && h('span', { class: 'review-tag', title: `Merged into ${r.reviewBranch} at ${r.reviewCommit ?? ''}` }, `in ${r.reviewBranch}`),
       (r.auto?.plan || r.auto?.implementation) && h('span', { class: 'auto-tag', title: 'This run can approve itself' },
         r.auto.plan && r.auto.implementation ? 'full auto' : r.auto.plan ? 'auto plan' : 'auto implementation'),
       r.branch && h('span', {}, 'Branch ', h('b', {}, r.branch)),
@@ -955,11 +998,14 @@ function refreshStageRow(refs, defaultAgent) {
 
 const autoPlan = document.getElementById('autoPlan');
 const autoImpl = document.getElementById('autoImpl');
+const autoMerge = document.getElementById('autoMerge');
+const autoSettings = () => ({ plan: autoPlan.checked, implementation: autoImpl.checked, mergeToReview: autoMerge.checked });
 
 function renderStageAgents(project) {
   // The project's own default for automation, which the checkboxes then let you change for this run.
   autoPlan.checked = !!project?.auto?.plan;
   autoImpl.checked = !!project?.auto?.implementation;
+  autoMerge.checked = !!project?.auto?.mergeToReview;
   stageSelects = {};
   const stages = (project?.stages ?? []).filter((s) => STAGE_LABELS[s]);
   stageAgentsBox.hidden = !project || project.name === 'demo' || stages.length === 0;
@@ -1144,7 +1190,7 @@ document.getElementById('newRunForm').addEventListener('submit', async (e) => {
   if (!brief) return;
   if (runMode !== 'single') {
     try {
-      const body = { project: projectSelect.value, kind: runMode, auto: { plan: autoPlan.checked, implementation: autoImpl.checked }, stopOnFailure: stopOnFailure.checked };
+      const body = { project: projectSelect.value, kind: runMode, auto: autoSettings(), stopOnFailure: stopOnFailure.checked };
       if (runMode === 'queue') {
         body.briefs = briefInput.value.split(/^\s*-{3,}\s*$/m).map((b) => b.trim()).filter(Boolean);
         body.stages = collectStageChoices();
@@ -1173,7 +1219,7 @@ document.getElementById('newRunForm').addEventListener('submit', async (e) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         brief, project: projectSelect.value, stages: collectStageChoices(),
-        auto: { plan: autoPlan.checked, implementation: autoImpl.checked },
+        auto: autoSettings(),
       }),
     });
     briefInput.value = '';
