@@ -337,6 +337,9 @@ The app sets the invariant culture at startup so dollar amounts and counts in me
   `localStorage`) puts runs in collapsible per-project sections (`collapsedGroups`). Finished runs have a checkbox (`selected`) and an
   Archive/Restore button; bulk archive just calls the existing per-run routes in parallel (the server still refuses active runs) and
   `toast` offers Undo, which calls the opposite route. No new API.
+  Keyboard: one document-level `keydown` listener hands keys to `boardKeys`, which only the board sets (`route()` clears it), and it
+  ignores typing in inputs and open dialogs. `cursor` (run id plus index) is the highlighted row; if that row disappears (archived),
+  the cursor stays at the same position.
 - **Feed groups.** Each `StageStarted` event opens a `<details>` group for that attempt; later events join it until the next stage
   starts or the run finishes. Starting a new attempt folds the earlier ones of the same stage, and `StageFinished` stamps the group's header
   with the outcome.

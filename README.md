@@ -128,6 +128,9 @@ archive or restore them together; a toast offers **Undo**. Archiving hides a run
 on the run page, removes the run's folder (events, artifacts) for good; the git branch is never touched. Delete is refused while a
 run is active or still holds its workspace.
 
+Keyboard on the board: `j` / `k` move the highlighted row, `Enter` opens it, `e` archives or restores it, `x` selects it, `/` jumps to
+search (`Esc` leaves it) and `n` opens the New run dialog.
+
 ### Notifications
 
 The bell in the top bar turns on browser notifications (the browser asks for permission once). When the tab is in the background you
