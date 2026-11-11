@@ -389,11 +389,56 @@ async function showSettings() {
     }),
   }, 'Reload config and re-check');
 
+  /* Branches the runs left behind (moonwalk/*): see which are merged, delete them safely. */
+  const branchesBox = h('div', {});
+  const branchProject = h('select', { 'aria-label': 'Project' });
+  const loadBranches = async () => {
+    if (!branchProject.value) { put(branchesBox, h('div', { class: 'hint' }, 'No project with a repository.')); return; }
+    try {
+      const data = await api(`/api/branches?project=${encodeURIComponent(branchProject.value)}`);
+      const rows = data.branches;
+      const ago = (t) => t ? `${fmtDuration(Date.now() - new Date(t).getTime())} ago` : '';
+      put(branchesBox,
+        rows.length ? h('table', { class: 'batch-table' },
+          h('thead', {}, h('tr', {}, ['Branch', 'State', 'Commits', 'Last commit', ''].map((x) => h('th', {}, x)))),
+          h('tbody', {}, rows.map((b) => h('tr', {},
+            h('td', { class: 'label' }, b.name, h('div', { class: 'muted' }, b.subject)),
+            h('td', {}, b.merged ? h('span', { class: 'pill s-done' }, 'merged') : h('span', { class: 'pill s-needshuman' }, 'not merged'),
+              b.protectedReason && h('div', { class: 'muted' }, `kept: ${b.protectedReason}`)),
+            h('td', {}, `${b.ahead} ahead of ${data.baseBranch}`),
+            h('td', {}, ago(b.lastCommit)),
+            h('td', {}, !b.protectedReason && h('button', { class: 'btn danger small', type: 'button', onclick: () => attempt(async () => {
+              const warn = b.merged ? `Delete the merged branch ${b.name}?` : `${b.name} has ${b.ahead} commit(s) that are NOT in ${data.baseBranch}. Deleting it loses them.\n\nDelete it anyway?`;
+              if (!confirm(warn)) return;
+              await post('/api/branches/delete', { project: branchProject.value, branch: b.name, force: !b.merged });
+              await loadBranches();
+            }) }, 'Delete')))))) : h('div', { class: 'hint' }, 'No moonwalk/* branches in this repository.'));
+    } catch (err) {
+      put(branchesBox, h('div', { class: 'error-box' }, `Could not list branches: ${err.message}`));
+    }
+  };
+  branchProject.addEventListener('change', loadBranches);
+  const branchTools = h('div', { class: 'filter-bar' }, branchProject,
+    h('button', { class: 'btn small', type: 'button', onclick: loadBranches }, 'Refresh'),
+    h('button', { class: 'btn small', type: 'button', onclick: () => attempt(async () => {
+      if (!confirm('Delete every merged moonwalk/* branch that is not in use?')) return;
+      const r = await post('/api/branches/delete-merged', { project: branchProject.value });
+      alert(r.deleted.length ? `Deleted ${r.deleted.length} branch(es).` : 'Nothing to delete.');
+      await loadBranches();
+    }) }, 'Delete merged'),
+    h('button', { class: 'btn small', type: 'button', onclick: () => attempt(async () => { alert((await post('/api/branches/prune', { project: branchProject.value })).message); }) }, 'Prune worktrees'));
+
   view.replaceChildren(
     h('div', { class: 'page-head' }, h('h1', {}, 'Settings'), reload),
     h('h2', { class: 'section-title' }, 'Agents'), notes, agentsBox,
-    h('h2', { class: 'section-title' }, 'Projects'), projectsBox);
+    h('h2', { class: 'section-title' }, 'Projects'), projectsBox,
+    h('h2', { class: 'section-title' }, 'Branches left by runs'), branchTools, branchesBox);
   load();
+  api('/api/projects').then((all) => {
+    const real = all.filter((p) => p.valid && p.name !== 'demo');
+    put(branchProject, real.map((p) => h('option', { value: p.name }, p.name)));
+    loadBranches();
+  }).catch(() => {});
 }
 
 window.addEventListener('hashchange', route);
@@ -985,6 +1030,44 @@ presetDelete.addEventListener('click', () => attempt(async () => {
   await loadPresets();
 }));
 
+/* Brief templates: reusable briefs kept as files in the briefs folder. */
+const briefSelect = document.getElementById('briefSelect');
+const briefDelete = document.getElementById('briefDelete');
+let briefTemplates = [];
+
+async function loadBriefs() {
+  try { briefTemplates = await api('/api/briefs'); } catch { briefTemplates = []; }
+  put(briefSelect, h('option', { value: '' }, briefTemplates.length ? 'Brief template…' : 'No saved brief templates'),
+    briefTemplates.map((t) => h('option', { value: t.name }, t.name)));
+  briefDelete.hidden = true;
+}
+
+briefSelect.addEventListener('change', () => {
+  const t = briefTemplates.find((x) => x.name === briefSelect.value);
+  briefDelete.hidden = !t;
+  if (!t) return;
+  if (briefInput.value.trim() && briefInput.value.trim() !== t.text.trim() && !confirm('Replace the brief with this template?')) { briefSelect.value = ''; briefDelete.hidden = true; return; }
+  briefInput.value = t.text;
+});
+
+document.getElementById('briefSave').addEventListener('click', () => attempt(async () => {
+  const text = briefInput.value.trim();
+  if (!text) { alert('Write a brief first.'); return; }
+  const name = prompt('Name for this template (letters, digits, spaces, dashes)', briefSelect.value || '');
+  if (!name?.trim()) return;
+  await post('/api/briefs', { name: name.trim(), text });
+  await loadBriefs();
+  briefSelect.value = name.trim();
+  briefDelete.hidden = false;
+}));
+
+briefDelete.addEventListener('click', () => attempt(async () => {
+  const name = briefSelect.value;
+  if (!name || !confirm(`Delete the template "${name}"?`)) return;
+  await api(`/api/briefs/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  await loadBriefs();
+}));
+
 /* Single run, a queue of briefs, or one brief compared across agent combinations. */
 const runModeBox = document.getElementById('runMode');
 const compareBox = document.getElementById('compareBox');
@@ -1048,6 +1131,7 @@ function showProjectNote(projects) {
 document.getElementById('newRunBtn').addEventListener('click', async () => {
   try { await loadProjects(); } catch { /* keep whatever is listed */ }
   await loadPresets();
+  await loadBriefs();
   runMode = 'single';
   applyMode();
   dialog.showModal();

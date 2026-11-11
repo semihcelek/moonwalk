@@ -35,6 +35,11 @@
         <button type="button" data-mode="queue" title="Several briefs, run one after another">Queue several</button>
         <button type="button" data-mode="compare" title="One brief through several agent and model combinations">Compare agents</button>
       </div>
+      <div class="preset-row brief-tools">
+        <select id="briefSelect" aria-label="Brief template"></select>
+        <button class="btn small" type="button" id="briefSave" title="Save the brief below as a reusable template">Save as template</button>
+        <button class="btn small danger" type="button" id="briefDelete" title="Delete the selected template" hidden>Delete</button>
+      </div>
       <label class="field">
         <span>Brief</span>
         <textarea id="brief" rows="6" placeholder="Describe the feature or fix. The spec stage turns this into acceptance criteria." required></textarea>

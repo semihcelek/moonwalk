@@ -151,6 +151,20 @@ The whole batch is checked before anything starts (unknown stage, agent or model
 show as chips on the board. **Cancel batch** cancels the run in progress and skips the rest. If MoonWalk stops mid-batch, the batch
 comes back as Interrupted and its remaining runs are not started; the runs already started are recovered like any other.
 
+### Brief templates
+
+Above the brief box, **Save as template** keeps the current brief under a name (a markdown file in `briefs/`, git-ignored) and the
+dropdown fills the box from a saved one. A template is plain text, so it can say "read `docs/plans/impact-juice.md` first" and the
+agent reads that file in the repository. Names use letters, digits, spaces, dashes and underscores.
+
+### Cleaning up branches
+
+Every run leaves a `moonwalk/<run>-<title>` branch. **Settings > Branches left by runs** lists them for a project with whether each is
+merged into the base branch, how many commits it is ahead, and when it was last committed. **Delete** removes one; an unmerged branch asks
+you to confirm because its commits would be lost. **Delete merged** removes every merged branch that is not in use, and **Prune worktrees**
+clears git's records of worktree folders that no longer exist. A branch is never deleted while it is checked out in the repository, checked
+out in a worktree, or belongs to a run that is still active or still holds the workspace. Only `moonwalk/*` branches can be deleted here.
+
 ### Presets
 
 The *Agent per stage* section has a **Preset** dropdown. Built in: Claude Opus plans and Sonnet implements, Claude Sonnet plans and
@@ -224,5 +238,4 @@ The browser tab title shows `(n)` while runs wait for you, and those rows are hi
 3. Control surface: gates, pause/resume, retry, guidance notes, Spec, Verify and Handover stages (done)
 4. agy and generic CLI agents, agent health and Settings page, recovery of interrupted runs, worktree mode (done)
 
-Next (see the improvement plan): brief templates and branch cleanup, a Unity compile check and `.meta` auto-commit, and a playtest
-stage.
+Next (see the improvement plan): a Unity compile check and `.meta` auto-commit, and a playtest stage.

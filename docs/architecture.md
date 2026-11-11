@@ -357,6 +357,20 @@ and its unfinished items too; nothing is resumed.
 for runs with a branch, `git diff --numstat` totals (files, added, removed) against the base. The UI has a mode switch in the New run dialog, a
 `#/batch/<id>` page (a queue table, or a comparison table with the cheapest and fastest finished variant marked) and recent-batch chips on the board.
 
+## Brief templates and branch hygiene
+
+**Templates.** `BriefStore` keeps one `<name>.md` per template in `briefs/` (`MoonWalk:BriefsDir`). A name must match
+`^[A-Za-z0-9][A-Za-z0-9 _-]{0,59}$`, which cannot name another folder, and a template holds at most 40,000 characters.
+`GET /api/briefs`, `POST /api/briefs {name, text}` (replaces by name), `DELETE /api/briefs/{name}`.
+
+**Branches.** `BranchHygiene` lists `refs/heads/moonwalk/*` with `git for-each-ref`, whether each is merged into the project's base branch
+(`git branch --merged <base>`), commits ahead (`rev-list --count base..branch`), the checked-out branch, and worktree checkouts
+(`git worktree list --porcelain`). The run a branch belongs to is read from its name (`moonwalk/<run id>-slug`). `GET /api/branches?project=`,
+`POST /api/branches/delete {project, branch, force}`, `/delete-merged` and `/prune`. The server decides what is protected, not the UI: a
+branch is kept when it is checked out in the repository or a worktree, or when its run is active or still holds the workspace (409 with the
+reason). Only `moonwalk/*` names are accepted. An unmerged branch needs `force`. The delete itself uses `git branch -D` after MoonWalk's own
+merged-into-base check, because `-d` judges "merged" against whatever happens to be checked out and refused branches that were merged into the base.
+
 ## Event types
 
 | Type | UI group | Notes |

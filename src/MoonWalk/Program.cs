@@ -32,6 +32,7 @@ registry.Reload();
 
 builder.Services.AddSingleton(paths);
 builder.Services.AddSingleton(new PresetStore(paths.PresetsFile));
+builder.Services.AddSingleton(new BriefStore(paths.BriefsDir));
 builder.Services.AddSingleton(agents);
 builder.Services.AddSingleton(registry);
 builder.Services.AddSingleton(new EventHub(runsRoot));

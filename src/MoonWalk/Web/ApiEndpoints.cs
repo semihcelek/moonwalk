@@ -11,6 +11,10 @@ public sealed record NewRunRequest(string? Brief, string? Project, Dictionary<st
 
 public sealed record GuidanceRequest(string? Text);
 
+public sealed record SaveBriefRequest(string? Name, string? Text);
+
+public sealed record BranchRequest(string? Project, string? Branch, bool Force = false);
+
 public sealed record SavePresetRequest(string? Name, Dictionary<string, AgentChoice>? Stages);
 
 public static class ApiEndpoints
@@ -33,6 +37,34 @@ public static class ApiEndpoints
             removed += cols.Length > 1 && int.TryParse(cols[1], out var r) ? r : 0;
         }
         return new { files, added, removed };
+    }
+
+    private static ProjectEntry? RealProject(ProjectRegistry projects, string? name) =>
+        name is not null && projects.Get(name) is { IsValid: true, Profile.IsDemo: false } entry ? entry : null;
+
+    /// <summary>Why a run branch must not be deleted right now, or null. Never the checked-out branch, a worktree's, or an unfinished run's.</summary>
+    private static string? ProtectedReason(BranchInfo b, RunStore store)
+    {
+        if (b.Current)
+        {
+            return "it is checked out in the repository";
+        }
+        if (b.Worktree is not null)
+        {
+            return $"it is checked out in a worktree ({b.Worktree})";
+        }
+        if (b.RunId is { } id && store.Get(id) is { } run)
+        {
+            if (Run.IsActive(run.Status))
+            {
+                return "its run is still active";
+            }
+            if (run.WorkspaceHeld)
+            {
+                return "its run still holds the workspace";
+            }
+        }
+        return null;
     }
 
     private static IResult Reply((bool Ok, string Message) result) =>
@@ -177,6 +209,74 @@ public static class ApiEndpoints
                 truncated,
             }, Json.Options);
         });
+
+        app.MapGet("/api/briefs", (BriefStore briefs) => Results.Json(briefs.List(), Json.Options));
+
+        app.MapPost("/api/briefs", (SaveBriefRequest request, BriefStore briefs) =>
+            briefs.Save(request.Name ?? "", request.Text ?? "") is { } problem
+                ? Results.BadRequest(new { error = problem })
+                : Results.Ok(new { saved = request.Name }));
+
+        app.MapDelete("/api/briefs/{name}", (string name, BriefStore briefs) =>
+            briefs.Delete(name) ? Results.Ok(new { deleted = name }) : Results.NotFound());
+
+        // Branch hygiene: the moonwalk/* branches runs leave behind.
+        app.MapGet("/api/branches", async (string? project, ProjectRegistry projects, RunStore store, CancellationToken ct) =>
+        {
+            if (RealProject(projects, project) is not { } entry)
+            {
+                return Results.BadRequest(new { error = "Choose a project that has a repository." });
+            }
+            var branches = await BranchHygiene.ListAsync(entry.Profile.RepoPath, entry.Profile.BaseBranch, ct);
+            return Results.Json(new
+            {
+                project = entry.Profile.Name,
+                baseBranch = entry.Profile.BaseBranch,
+                branches = branches.Select(b => new { b.Name, b.Merged, b.Ahead, b.LastCommit, b.Subject, b.RunId, b.Current, b.Worktree,
+                    protectedReason = ProtectedReason(b, store) }),
+            }, Json.Options);
+        });
+
+        app.MapPost("/api/branches/delete", async (BranchRequest request, ProjectRegistry projects, RunStore store, CancellationToken ct) =>
+        {
+            if (RealProject(projects, request.Project) is not { } entry)
+            {
+                return Results.BadRequest(new { error = "Choose a project that has a repository." });
+            }
+            var all = await BranchHygiene.ListAsync(entry.Profile.RepoPath, entry.Profile.BaseBranch, ct);
+            if (all.FirstOrDefault(b => b.Name == request.Branch) is not { } info)
+            {
+                return Results.NotFound(new { error = "No such moonwalk branch." });
+            }
+            if (ProtectedReason(info, store) is { } why)
+            {
+                return Results.Conflict(new { error = $"Not deleted: {why}." });
+            }
+            var (ok, message) = await BranchHygiene.DeleteAsync(entry.Profile.RepoPath, info.Name, info.Merged, request.Force, ct);
+            return ok ? Results.Ok(new { message }) : Results.Conflict(new { error = message });
+        });
+
+        app.MapPost("/api/branches/delete-merged", async (BranchRequest request, ProjectRegistry projects, RunStore store, CancellationToken ct) =>
+        {
+            if (RealProject(projects, request.Project) is not { } entry)
+            {
+                return Results.BadRequest(new { error = "Choose a project that has a repository." });
+            }
+            var deleted = new List<string>();
+            foreach (var b in (await BranchHygiene.ListAsync(entry.Profile.RepoPath, entry.Profile.BaseBranch, ct)).Where(b => b.Merged && ProtectedReason(b, store) is null))
+            {
+                if ((await BranchHygiene.DeleteAsync(entry.Profile.RepoPath, b.Name, merged: true, force: false, ct)).Ok)
+                {
+                    deleted.Add(b.Name);
+                }
+            }
+            return Results.Ok(new { deleted });
+        });
+
+        app.MapPost("/api/branches/prune", async (BranchRequest request, ProjectRegistry projects, CancellationToken ct) =>
+            RealProject(projects, request.Project) is { } entry
+                ? Results.Ok(new { message = await BranchHygiene.PruneWorktreesAsync(entry.Profile.RepoPath, ct) })
+                : Results.BadRequest(new { error = "Choose a project that has a repository." }));
 
         app.MapGet("/api/batches", (BatchService batches) => Results.Json(batches.List(), Json.Options));
 
