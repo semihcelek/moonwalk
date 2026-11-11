@@ -815,6 +815,13 @@ public sealed class RunEngine
                         {
                             record.Status = StageStatus.Passed;
                         }
+                        if (autoDecision is not null && wait.Reason is "Review" or "Gate")
+                        {
+                            // Say so in the summary: "Ready for your playtest, approve when it plays well" is wrong once auto mode approved it.
+                            record.Summary = wait.Reason == "Review"
+                                ? "Auto-approved; nobody played this result."
+                                : "Auto-approved. " + record.Summary;
+                        }
                     });
                     index++;
                     continue;

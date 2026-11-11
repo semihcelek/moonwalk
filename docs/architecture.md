@@ -368,6 +368,11 @@ The app sets the invariant culture at startup so dollar amounts and counts in me
   `toast` offers Undo, which calls the opposite route. No new API.
   The bulk bar also offers "Archive Done older than `STALE_DAYS` (7) days", computed client-side from `finishedAt`; there is no
   server-side auto-archive.
+  Row details: `cleanTitle` drops a leading "Goal:"; `batchNum` keeps only the "2/5" of a batch label; `verifyBadge` marks a Done run
+  verified only when its `Verify` stage is `Passed` (client-side, from the run snapshot). `md()` renders headings, bullets, `**bold**` and
+  `code` as DOM nodes (never `innerHTML`) for stage summaries, agent text and stage results. The batch block header adds cost, time since
+  the last finish and merged count. When auto mode approves a `Review` or `Gate` wait the engine rewrites the stage summary
+  ("Auto-approved; nobody played this result.") and the feed header shows "Auto-approved" instead of NeedsHuman.
   Batches: `loadBatches` also fills `batchInfo` (id to name, kind, done, total from `GET /api/batches`) and re-renders when it changes.
   `batchRows` folds two or more shown runs with the same `batchId` into a `batchBlock` (collapsed unless in `openBatches` or a run needs
   you); a single run of a batch stays a plain row. No new API.
@@ -396,7 +401,7 @@ and its unfinished items too; nothing is resumed.
 
 `GET /api/batches`, `POST /api/batches`, `POST /api/batches/{id}/cancel`, and `GET /api/batches/{id}`, which returns each item with its full run and,
 for runs with a branch, `git diff --numstat` totals (files, added, removed) against the base. The UI has a mode switch in the New run dialog, a
-`#/batch/<id>` page (a queue table, or a comparison table with the cheapest and fastest finished variant marked) and recent-batch chips on the board.
+`#/batch/<id>` page (a queue table, or a comparison table with the cheapest and fastest finished variant marked) and chips for running batches on the board (finished batches show as folded blocks).
 
 ## Brief templates and branch hygiene
 

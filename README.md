@@ -123,7 +123,12 @@ model and effort too. The Integrate stage needs the Unity Editor open with unity
 
 The board has a search box (title, id, project, brief), a status filter, a project filter and *Show archived*. Each row shows its
 tokens and cost, a stage bar, its branch, and one line saying why it waits or failed. Runs that need you are pinned in a **Needs you**
-section at the top. The **Flat / By project** switch groups the board into collapsible project sections (with counts, a "need you"
+section at the top. Every row also shows its cost, a **verified** or **not verified** tag (a Done run is verified only when a Verify stage passed; otherwise
+nothing compiled or tested the result), an **in <review branch>** tag once merged, and a **round N** tag after a continuation. Long
+"Goal:" prefixes are dropped from titles. The usage line at the top is one line (today, and 7 days when it differs) with **by model**
+to expand. **Select finished** and **Archive Done older than 7 days** sit in the filter bar.
+
+The **Flat / By project** switch groups the board into collapsible project sections (with counts, a "need you"
 badge and spend); the choice is remembered.
 
 Finished runs have an **Archive** button on the row (it appears on hover) and a checkbox. **Select finished** or tick several runs to
@@ -133,7 +138,7 @@ on the run page, removes the run's folder (events, artifacts) for good; the git 
 run is active or still holds its workspace.
 
 Runs that came from the same queue or comparison fold into one block (**Queue: name, 2/5 done**, with badges for runs that need you,
-are active or failed). Click it to open the rows, **Archive N** archives its finished runs, **Open** goes to the batch page. A block
+are active or failed, how many are merged into the review branch, the cost, and when it finished). Click it to open the rows, **Archive N** archives its finished runs, **Open** goes to the batch page. A block
 with a run waiting for you stays open.
 
 ### Continuing on a finished run
@@ -188,7 +193,7 @@ The **New run** dialog has a switch at the top:
   the run and its Changes tab.
 
 The whole batch is checked before anything starts (unknown stage, agent or model is refused with the reason), and recent batches
-show as chips on the board. **Cancel batch** cancels the run in progress and skips the rest. If MoonWalk stops mid-batch, the batch
+that are still running show as chips on the board (finished ones are the folded blocks). **Cancel batch** cancels the run in progress and skips the rest. If MoonWalk stops mid-batch, the batch
 comes back as Interrupted and its remaining runs are not started; the runs already started are recovered like any other.
 
 ### Testing several results together: the review branch

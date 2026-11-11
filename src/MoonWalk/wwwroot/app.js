@@ -283,7 +283,7 @@ async function loadBatches(strip, force = false) {
     batchInfo.clear();
     for (const b of all) batchInfo.set(b.id, { name: b.name, kind: b.kind, total: b.items.length, done: b.items.filter((i) => !['Pending', 'Running'].includes(i.status)).length });
     if (sig !== batchSig) { batchSig = sig; onRunsChanged?.(); }
-    put(strip, all.slice(0, 4).map((b) => {
+    put(strip, all.filter((b) => b.status === 'Running').slice(0, 4).map((b) => {
       const done = b.items.filter((i) => !['Pending', 'Running'].includes(i.status)).length;
       return batchLink(b.id, `${b.kind === 'compare' ? 'Comparison' : 'Queue'}: ${b.name} · ${done}/${b.items.length} · ${b.status}`);
     }));
@@ -509,7 +509,9 @@ async function showBoard() {
     h('button', { type: 'button', 'data-group': 'flat' }, 'Flat'),
     h('button', { type: 'button', 'data-group': 'project' }, 'By project'));
   let projectKey = '';
-  const bar = h('div', { class: 'filter-bar' }, search, statusSel, projectSel, h('label', { class: 'inline' }, archivedBox, 'Show archived'), groupSwitch);
+  const selectBtn = h('button', { class: 'btn small ghost', type: 'button' }, 'Select finished');
+  const staleBtn = h('button', { class: 'btn small ghost', type: 'button' });
+  const bar = h('div', { class: 'filter-bar' }, search, statusSel, projectSel, h('label', { class: 'inline' }, archivedBox, 'Show archived'), selectBtn, staleBtn, groupSwitch);
   const bulk = h('div', { class: 'bulk-bar' });
   view.replaceChildren(h('div', { class: 'page-head' }, h('h1', {}, 'Runs'), sub), strip, batchStrip, bar, bulk, list);
 
@@ -534,13 +536,17 @@ async function showBoard() {
     const stale = [...runs.values()].filter((r) => r.status === 'Done' && !r.archived && Date.now() - new Date(r.finishedAt ?? r.updatedAt).getTime() > STALE_DAYS * 864e5);
     const toArchive = picked.filter((r) => !r.archived);
     const toRestore = picked.filter((r) => r.archived);
+    const selectable2 = shownFinished.filter((x) => !x.archived);
+    selectBtn.hidden = picked.length > 0 || !selectable2.length;
+    selectBtn.onclick = () => { for (const r of selectable2) selected.add(r.id); render(); };
+    staleBtn.hidden = !stale.length;
+    staleBtn.textContent = `Archive Done older than ${STALE_DAYS} days (${stale.length})`;
+    staleBtn.onclick = () => archiveRuns(stale.map((r) => r.id), true);
     put(bulk,
       picked.length ? h('span', { class: 'bulk-count' }, `${picked.length} selected`) : null,
       toArchive.length ? h('button', { class: 'btn small', type: 'button', onclick: () => archiveRuns(toArchive.map((r) => r.id), true) }, `Archive ${toArchive.length}`) : null,
       toRestore.length ? h('button', { class: 'btn small', type: 'button', onclick: () => archiveRuns(toRestore.map((r) => r.id), false) }, `Restore ${toRestore.length}`) : null,
-      picked.length ? h('button', { class: 'btn small', type: 'button', onclick: () => { selected.clear(); render(); } }, 'Clear') : null,
-      !picked.length && stale.length ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => archiveRuns(stale.map((r) => r.id), true) }, `Archive Done older than ${STALE_DAYS} days (${stale.length})`) : null,
-      !picked.length && shownFinished.length ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => { for (const r of shownFinished.filter((x) => !x.archived)) selected.add(r.id); render(); } }, 'Select finished') : null);
+      picked.length ? h('button', { class: 'btn small', type: 'button', onclick: () => { selected.clear(); render(); } }, 'Clear') : null);
     bulk.hidden = !bulk.childNodes.length;
     for (const cb of list.querySelectorAll('input[data-run]')) cb.checked = selected.has(cb.dataset.run);
   };
@@ -581,6 +587,9 @@ async function showBoard() {
     const archivable = rs.filter((r) => !isActive(r.status) && !r.archived);
     const done = info ? info.done : rs.filter((r) => !isActive(r.status)).length;
     const total = info ? info.total : rs.length;
+    const cost = rs.reduce((n, r) => n + totals(r).cost, 0);
+    const lastFinish = live ? null : rs.map((r) => r.finishedAt ?? r.updatedAt).sort().pop();
+    const merged = rs.filter((r) => r.reviewMergedAt).length;
     return h('div', { class: 'batch-block' },
       h('div', { class: 'batch-head' },
         h('button', {
@@ -591,7 +600,10 @@ async function showBoard() {
         h('span', { class: 'group-count' }, `${done}/${total} done`),
         attention ? h('span', { class: 'group-badge attn' }, `${attention} need you`) : null,
         live ? h('span', { class: 'group-badge' }, `${live} active`) : null,
-        failed ? h('span', { class: 'group-badge bad' }, `${failed} failed`) : null),
+        failed ? h('span', { class: 'group-badge bad' }, `${failed} failed`) : null,
+        merged ? h('span', { class: 'group-badge ok' }, `${merged}/${rs.length} merged`) : (!live && !failed ? h('span', { class: 'group-badge' }, 'not merged') : null),
+        cost ? h('span', { class: 'group-meta' }, fmtUsd(cost)) : null,
+        lastFinish ? h('span', { class: 'group-meta' }, 'finished ', h('span', { 'data-ago': lastFinish }, ago(lastFinish))) : null),
         archivable.length ? h('button', { class: 'btn small', type: 'button', onclick: () => archiveRuns(archivable.map((r) => r.id), true) }, `Archive ${archivable.length}`) : null,
         h('a', { class: 'btn small', href: `#/batch/${encodeURIComponent(id)}` }, 'Open')),
       open && h('div', { class: 'batch-rows' }, rs.map((r) => runRow(r, opts))));
@@ -735,7 +747,43 @@ function toast(message, action) {
 
 let usageStamp = 0;
 
-/** Tokens and dollars used today and over the last 7 days, and by agent and model. Re-read at most every few seconds. */
+/** Title for display: drops a leading "Goal:" style label that every brief of a batch repeats. */
+const cleanTitle = (t) => String(t ?? '').replace(/^\s*(goal|task|brief)\s*:\s*/i, '');
+
+/** The "2/5" part of a batch label like "2/5 Goal: ...". */
+const batchNum = (run) => /^(\d+\/\d+)/.exec(run.batchLabel ?? '')?.[1] ?? '';
+
+/** Minimal markdown for agent text as DOM nodes (never innerHTML): headings, bullets, **bold** and `code`. */
+function md(text) {
+  const out = [];
+  const lines = String(text ?? '').replace(/\r\n/g, '\n').split('\n');
+  lines.forEach((line, i) => {
+    let l = line;
+    const heading = /^\s{0,3}#{1,6}\s+(.*)$/.exec(l);
+    if (heading) l = heading[1];
+    l = l.replace(/^(\s*)[-*]\s+/, '$1• ');
+    const nodes = l.split(/(\*\*[^*]+\*\*|`[^`]+`)/).map((p) =>
+      p.length > 4 && p.startsWith('**') && p.endsWith('**') ? h('strong', {}, p.slice(2, -2))
+        : p.length > 2 && p.startsWith('`') && p.endsWith('`') ? h('code', {}, p.slice(1, -1))
+          : p);
+    out.push(heading ? h('strong', {}, nodes) : nodes);
+    if (i < lines.length - 1) out.push('\n');
+  });
+  return out.flat();
+}
+
+/** Done runs say whether anything checked them: a passed Verify stage, or nothing. */
+function verifyBadge(run) {
+  if (run.status !== 'Done') return null;
+  const verified = (run.stages ?? []).some((s) => s.name === 'Verify' && s.status === 'Passed');
+  return verified
+    ? h('span', { class: 'v-tag ok', title: 'The Verify stage passed.' }, 'verified')
+    : h('span', { class: 'v-tag', title: 'No Verify stage passed for this run, so nothing compiled or tested the result.' }, 'not verified');
+}
+
+let usageOpen = false;
+
+/** One line: tokens and dollars today (and over 7 days when that differs), with the split by model on request. Re-read at most every few seconds. */
 async function loadUsage(strip, force = false) {
   if (!force && Date.now() - usageStamp < 4000) return;
   usageStamp = Date.now();
@@ -744,10 +792,16 @@ async function loadUsage(strip, force = false) {
     const chip = (label, tokens, cost) => h('span', { class: 'usage-chip' }, h('b', {}, label), ' ',
       [tokens ? `${fmtTokens(tokens)} tokens` : null, cost ? fmtUsd(cost) : null].filter(Boolean).join(' · ') || 'nothing yet');
     if (!u.totalTokens && !u.totalCostUsd) { strip.replaceChildren(); return; }
+    const same = u.today.tokens === u.totalTokens && u.today.costUsd === u.totalCostUsd;
+    const models = u.byAgent.slice(0, 8);
     put(strip,
-      chip('Today', u.today.tokens, u.today.costUsd),
-      chip('7 days', u.totalTokens, u.totalCostUsd),
-      u.byAgent.slice(0, 5).map((a) => chip((a.model || a.agent).replace(/^claude-/, ''), a.tokens, a.costUsd)));
+      chip(same ? 'Today and 7 days' : 'Today', u.today.tokens, u.today.costUsd),
+      same ? null : chip('7 days', u.totalTokens, u.totalCostUsd),
+      models.length > 1 ? h('button', {
+        class: 'usage-toggle', type: 'button', 'aria-expanded': String(usageOpen),
+        onclick: () => { usageOpen = !usageOpen; loadUsage(strip, true); },
+      }, usageOpen ? 'by model ▾' : 'by model ▸') : null,
+      usageOpen ? models.map((a) => chip((a.model || a.agent).replace(/^claude-/, ''), a.tokens, a.costUsd)) : null);
   } catch { /* the strip is optional */ }
 }
 
@@ -757,12 +811,16 @@ let continueRequest = null;
 function runRow(run, opts = {}) {
   const stage = run.currentStage ?? (run.status === 'Done' ? 'finished' : '');
   const t = totals(run);
-  const spend = [t.tokens ? `${fmtTokens(t.tokens)} tokens` : null, t.hasCost ? fmtUsd(t.cost) : null].filter(Boolean).join(' · ');
   const finished = !isActive(run.status);
   /* one line of "why": what it waits for, or why it failed */
   const note = run.status === 'WaitingForHuman' ? run.waiting?.message : ['Failed', 'Interrupted'].includes(run.status) ? run.error : '';
-  const meta = [opts.hideProject ? null : run.project, run.id, run.batchLabel ? `batch ${run.batchLabel}` : null, run.branch, spend, run.archived ? 'archived' : null]
+  const meta = [opts.hideProject ? null : run.project, run.id, batchNum(run) ? `batch ${batchNum(run)}` : null, run.archived ? 'archived' : null]
     .filter(Boolean).join(' · ');
+  const tags = [
+    verifyBadge(run),
+    run.reviewMergedAt && h('span', { class: 'v-tag ok', title: `Merged into ${run.reviewBranch}` }, `in ${run.reviewBranch}`),
+    run.rounds > 1 && h('span', { class: 'v-tag', title: 'Continued on the same branch with fix instructions' }, `round ${run.rounds}`),
+  ];
   const dots = h('span', { class: 'dots' }, (run.stages ?? []).map((s) => h('i', { class: `dot s-${s.status.toLowerCase()}`, title: `${s.name}: ${STATUS_LABEL[s.status] ?? s.status}` })));
   return h('div', { 'data-id': run.id, class: `run-row${run.status === 'WaitingForHuman' ? ' attn' : ''}${run.archived ? ' archived' : ''}` },
     finished
@@ -773,10 +831,11 @@ function runRow(run, opts = {}) {
       : h('span', { class: 'pick' }),
     h('a', { class: 'run-link', href: `#/run/${encodeURIComponent(run.id)}` },
       h('div', {}, pill(run.status)),
-      h('div', { class: 'main' }, h('div', { class: 'title' }, run.title),
-        h('div', { class: 'meta' }, meta),
+      h('div', { class: 'main' }, h('div', { class: 'title', title: run.title }, cleanTitle(run.title)),
+        h('div', { class: 'meta-line' }, h('span', { class: 'meta' }, meta), tags),
         note && h('div', { class: `why${run.status === 'WaitingForHuman' ? ' warn' : ' bad'}` }, note)),
       h('div', { class: 'hide-sm stagecell' }, dots, h('div', { class: 'meta' }, stage)),
+      h('div', { class: 'num hide-sm' }, t.hasCost ? fmtUsd(t.cost) : t.tokens ? `${fmtTokens(t.tokens)} tok` : ''),
       h('div', { class: 'num hide-sm' }, duration(run.createdAt, isActive(run.status) ? null : run.finishedAt ?? run.updatedAt)),
       h('div', { class: 'num hide-sm', 'data-ago': run.updatedAt }, ago(run.updatedAt))),
     h('div', { class: 'row-actions' },
@@ -816,7 +875,7 @@ async function showRun(id) {
   const decisionBox = h('div');
   const continueBox = h('div', { hidden: true });
   const stagesBox = h('div', { class: 'stages' });
-  const briefBox = h('div', { class: 'brief-box' }, h('b', {}, 'Brief'), run.brief);
+  const briefBox = h('details', { class: 'brief-box' }, h('summary', {}, 'Brief'), run.brief);
   const errorSlot = h('div');
   const feed = h('div', { class: 'feed', role: 'log', 'aria-live': 'off' });
   const jump = h('button', { class: 'jump', type: 'button', hidden: true }, 'Jump to latest ↓');
@@ -945,34 +1004,35 @@ async function showRun(id) {
   /* continue on this branch: a finished run goes back to work on the same branch with fix instructions */
   let continueOpen = continueRequest === id;
   continueRequest = null;
-  const contNote = h('textarea', { rows: 3, placeholder: 'What does not work, or what should change? The agent gets this as guidance and sees the code already on the branch.' });
+  const contNote = h('textarea', { rows: 2, placeholder: 'What does not work, or what should change? The agent gets this as guidance and sees the code already on the branch.  (Ctrl+Enter to continue)' });
   const contFrom = h('select', {});
   const contAgent = h('select', {});
   const contAuto = h('input', { type: 'checkbox' });
-  const contHint = h('div', { class: 'muted' });
+  const contHint = h('span', { class: 'muted' });
   let contKey = '';
-  continueBox.append(h('div', { class: 'decision r-review' },
-    h('div', { class: 'decision-head' }, h('b', {}, 'Continue on this branch')),
-    contHint, contNote,
-    h('div', { class: 'decision-row' },
-      h('label', { class: 'inline' }, 'Start from', contFrom),
-      h('label', { class: 'inline' }, 'with', contAgent),
-      h('label', { class: 'inline', title: 'Off by default so you can review this round. On: it approves its own gates and finishes unattended.' }, contAuto, 'auto mode'),
-      h('button', {
-        class: 'btn primary', type: 'button',
-        onclick: () => attempt(async () => {
-          const note = contNote.value.trim();
-          if (!note) { contNote.focus(); return; }
-          await post(`/api/runs/${encodeURIComponent(id)}/reopen`, {
-            note, from: contFrom.value, agent: contAgent.value, auto: contAuto.checked ? { plan: true, implementation: true } : null,
-          });
-          contNote.value = '';
-          contAuto.checked = false;
-          continueOpen = false;
-          continueBox.hidden = true;
-        }),
-      }, 'Continue'),
-      h('button', { class: 'btn', type: 'button', onclick: () => { continueOpen = false; continueBox.hidden = true; } }, 'Cancel'))));
+  const closeContinue = () => { continueOpen = false; continueBox.hidden = true; };
+  const submitContinue = () => attempt(async () => {
+    const note = contNote.value.trim();
+    if (!note) { contNote.focus(); return; }
+    await post(`/api/runs/${encodeURIComponent(id)}/reopen`, {
+      note, from: contFrom.value, agent: contAgent.value, auto: contAuto.checked ? { plan: true, implementation: true } : null,
+    });
+    contNote.value = '';
+    contAuto.checked = false;
+    closeContinue();
+  });
+  contNote.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submitContinue(); } });
+  continueBox.append(h('div', { class: 'decision r-review compact' },
+    h('div', { class: 'decision-head' }, h('b', {}, 'Continue on this branch'), ' · ', contHint),
+    h('div', { class: 'cont-row' }, contNote,
+      h('div', { class: 'cont-actions' },
+        h('button', { class: 'btn primary', type: 'button', onclick: submitContinue }, 'Continue'),
+        h('button', { class: 'btn', type: 'button', onclick: closeContinue }, 'Cancel'))),
+    h('details', { class: 'cont-options' }, h('summary', {}, 'Options'),
+      h('div', { class: 'decision-row' },
+        h('label', { class: 'inline' }, 'Start from', contFrom),
+        h('label', { class: 'inline' }, 'with', contAgent),
+        h('label', { class: 'inline', title: 'Off by default so you can review this round. On: it approves its own gates and finishes unattended.' }, contAuto, 'auto mode')))));
 
   const renderContinue = (r) => {
     const can = !['Queued', 'Running', 'Paused', 'WaitingForHuman', 'Interrupted'].includes(r.status) && !!r.branch;
@@ -1025,7 +1085,7 @@ async function showRun(id) {
     const live = ['Queued', 'Running', 'Paused', 'WaitingForHuman'].includes(r.status);
     const canPause = ['Queued', 'Running'].includes(r.status) && !r.pauseRequested;
     put(head,
-      h('h1', {}, r.title), pill(r.status),
+      h('h1', { title: r.title }, cleanTitle(r.title)), pill(r.status),
       r.pauseRequested && r.status === 'Running' && h('span', { class: 'muted' }, 'pausing before next stage…'),
       canPause && h('button', { class: 'btn small', type: 'button', onclick: () => attempt(() => post(`/api/runs/${encodeURIComponent(r.id)}/pause`)) }, 'Pause'),
       (r.status === 'Paused' || (r.pauseRequested && r.status === 'Running')) &&
@@ -1055,10 +1115,11 @@ async function showRun(id) {
       (r.auto?.plan || r.auto?.implementation) && h('span', { class: 'auto-tag', title: 'This run can approve itself' },
         r.auto.plan && r.auto.implementation ? 'full auto' : r.auto.plan ? 'auto plan' : 'auto implementation'),
       r.rounds > 1 && h('span', { title: 'Continued on the same branch with fix instructions' }, 'Round ', h('b', {}, String(r.rounds))),
-      r.branch && h('span', {}, 'Branch ', h('b', {}, r.branch)),
+      verifyBadge(r),
+      r.branch && h('span', { class: 'fact-branch', title: r.branch }, 'Branch ', h('b', {}, r.branch)),
       r.commit && h('span', {}, 'Commit ', h('b', {}, r.commit)),
-      totals(r).tokens > 0 && h('span', {}, 'Tokens ', h('b', {}, fmtTokens(totals(r).tokens))),
-      r.costUsd != null && h('span', {}, 'Cost ', h('b', {}, `$${r.costUsd.toFixed(3)}`)),
+      (totals(r).tokens > 0 || r.costUsd != null) && h('span', {}, 'Spent ', h('b', {},
+        [r.costUsd != null ? `$${r.costUsd.toFixed(3)}` : null, totals(r).tokens > 0 ? `${fmtTokens(totals(r).tokens)} tokens` : null].filter(Boolean).join(' · '))),
       h('span', {}, 'Elapsed ', h('b', {}, duration(r.createdAt, isActive(r.status) ? null : r.finishedAt ?? r.updatedAt))));
     const releasable = r.workspaceHeld && !['Queued', 'Running', 'Paused', 'WaitingForHuman'].includes(r.status);
     const worktree = r.workspaceMode === 'Worktree';
@@ -1076,7 +1137,7 @@ async function showRun(id) {
         h('span', { class: 'node' }),
         h('div', { class: 'name' }, h('span', {}, s.name, s.agent && h('span', { class: 'agent-tag' }, s.agent)),
           s.startedAt && h('span', { class: 'dur' }, duration(s.startedAt, s.finishedAt))),
-        s.summary && h('div', { class: 'sum' }, s.summary),
+        s.summary && h('div', { class: 'sum clamp md', title: 'Click to expand', onclick: (e) => e.currentTarget.classList.toggle('open') }, md(s.summary)),
         usageLine(r, s.name))));
     errorSlot.replaceChildren(...(r.error && r.status !== 'Done' ? [h('div', { class: 'error-box' }, r.error)] : []));
   };
@@ -1151,7 +1212,7 @@ async function showRun(id) {
         break;
       case 'AgentText':
         closeDelta();
-        if (ev.text) addRow('text', ev, ev.text);
+        if (ev.text) addRow('text', ev, md(ev.text));
         break;
       case 'AgentToolUse':
       case 'AgentToolResult': {
@@ -1176,8 +1237,12 @@ async function showRun(id) {
           group.result.textContent = outcome;
           group.result.className = `attempt-result o-${outcome.toLowerCase()}`;
         }
+        if (ev.type === 'Decision' && /^Auto mode: approved/.test(ev.text ?? '') && group && group.stage === ev.stage) {
+          group.result.textContent = 'Auto-approved';
+          group.result.className = 'attempt-result o-passed';
+        }
         const bad = ev.type === 'RunFinished' && ['Failed', 'Cancelled', 'Interrupted'].includes(ev.data?.status);
-        addRow('system', ev, ev.text ?? ev.type, bad ? 'bad' : '');
+        addRow('system', ev, ev.type === 'StageFinished' && ev.text ? md(ev.text) : (ev.text ?? ev.type), bad ? 'bad' : '');
       }
     }
     scrollSoon();
