@@ -157,6 +157,39 @@ public sealed class ProjectRegistry(string projectsDir, AgentRegistry agents)
             errors.Add("The Verify stage needs at least one entry in 'verify'.");
         }
 
+        foreach (var (name, server) in p.Mcp.Servers)
+        {
+            var type = (server.Type ?? "").ToLowerInvariant();
+            if (type is not ("stdio" or "http"))
+            {
+                errors.Add($"mcp server '{name}': type must be 'stdio' or 'http'.");
+            }
+            else if (type == "stdio" && string.IsNullOrWhiteSpace(server.Command))
+            {
+                errors.Add($"mcp server '{name}': a stdio server needs a command.");
+            }
+            else if (type == "http" && string.IsNullOrWhiteSpace(server.Url))
+            {
+                errors.Add($"mcp server '{name}': an http server needs a url.");
+            }
+        }
+        foreach (var (stage, names) in p.Mcp.Stages)
+        {
+            if (!stage.Equals("Spec", StringComparison.OrdinalIgnoreCase) && !stage.Equals("Implement", StringComparison.OrdinalIgnoreCase) && !stage.Equals("Integrate", StringComparison.OrdinalIgnoreCase))
+            {
+                errors.Add($"mcp.stages: '{stage}' is not an agent stage (Spec, Implement or Integrate).");
+            }
+            foreach (var name in names.Where(n => !p.Mcp.Servers.ContainsKey(n)))
+            {
+                errors.Add($"mcp.stages.{stage}: server '{name}' is not defined under mcp.servers.");
+            }
+        }
+        if (p.Mcp.Configured && p.Stages.Contains("Integrate", StringComparer.OrdinalIgnoreCase)
+            && !(p.Mcp.Stages.TryGetValue("Integrate", out var integrateServers) && integrateServers.Length > 0))
+        {
+            errors.Add("The Integrate stage needs an MCP server: list one under mcp.stages.Integrate (for example the unity-mcp server).");
+        }
+
         return errors;
     }
 }

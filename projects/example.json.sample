@@ -65,8 +65,20 @@
     "allowPaths": [],
     "denyPaths": [".git/**", "**/.env*", "ProjectSettings/**"],
     "maxChangedFiles": 60,
-    "maxChangedLines": 2000
+    "maxChangedLines": 2000,
+    // Globs the Integrate stage may change although denyPaths would refuse them (an Editor-side step has to save scenes and prefabs).
+    "integrateAllowPaths": []
   },
+
+  // MCP servers the claude agent may use, per agent stage (Spec, Implement, Integrate). Only the listed servers are visible to that stage and
+  // the project's own .mcp.json is not loaded. Muse, agy and generic agents cannot be given servers (a warning says so).
+  // "mcp": {
+  //   "servers": {
+  //     "my-knowledge": { "type": "stdio", "command": "my-mcp", "args": ["mcp", "--repo", "C:\\Users\\me\\Projects\\MyGame"] },
+  //     "unity-mcp": { "type": "http", "url": "http://127.0.0.1:8080/mcp" }
+  //   },
+  //   "stages": { "Spec": ["my-knowledge"], "Implement": ["my-knowledge"], "Integrate": ["unity-mcp"] }
+  // },
 
   "claude": {
     "path": "claude",

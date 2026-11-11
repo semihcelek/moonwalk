@@ -6,7 +6,7 @@ namespace MoonWalk.Projects;
 /// <summary>Pure checks over the set of paths an agent changed. Paths use forward slashes and are relative to the repo root.</summary>
 public static class Guards
 {
-    public static List<string> Check(IReadOnlyList<string> changed, int changedLines, GuardRules rules)
+    public static List<string> Check(IReadOnlyList<string> changed, int changedLines, GuardRules rules, IReadOnlyList<string>? exceptions = null)
     {
         var violations = new List<string>();
 
@@ -22,9 +22,14 @@ public static class Guards
 
         var deny = rules.DenyPaths.Select(ToRegex).ToList();
         var allow = rules.AllowPaths.Select(ToRegex).ToList();
+        var except = (exceptions ?? []).Select(ToRegex).ToList();
 
         foreach (var path in changed)
         {
+            if (except.Any(r => r.IsMatch(path)))
+            {
+                continue; // explicitly allowed for this stage
+            }
             if (deny.Any(r => r.IsMatch(path)))
             {
                 violations.Add($"'{path}' matches a denied path.");

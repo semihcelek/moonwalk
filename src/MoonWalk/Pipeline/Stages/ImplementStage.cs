@@ -23,7 +23,10 @@ public sealed class ImplementStage : IStage
         context.Emit(EventTypes.System, $"Running {agent.Name} in {context.WorkDir}.");
 
         var headBefore = await workspace.Workspace.GetHeadAsync(workspace.State, ct);
-        var result = await agent.RunAsync(new AgentRequest(BuildPrompt(context), context.WorkDir, MaxBudgetUsd: context.RemainingBudgetUsd), context.Emit, ct);
+        var mcp = context.McpFor(Name);
+        var allowed = mcp is null ? null : context.Profile.Claude.AllowedTools.Concat(mcp.ToolPatterns).ToArray();
+        var result = await agent.RunAsync(
+            new AgentRequest(BuildPrompt(context), context.WorkDir, allowed, MaxBudgetUsd: context.RemainingBudgetUsd, McpConfigFile: mcp?.ConfigFile), context.Emit, ct);
 
         context.AddUsage(agent.Name, result);
         context.Emit(EventTypes.System,

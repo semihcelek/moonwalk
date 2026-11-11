@@ -125,6 +125,42 @@ public sealed class StageContext
         AddArtifact(name);
     }
 
+    /// <summary>
+    /// The MCP servers this stage's agent may use: a config file MoonWalk writes into the run folder and the Claude tool patterns that allow
+    /// exactly those servers. Null when the project configures no MCP (nothing changes), or when the agent is not Claude (it cannot be given
+    /// per-stage servers, so a warning says the stage runs without them).
+    /// </summary>
+    public McpAccess? McpFor(string stageName)
+    {
+        if (!Profile.Mcp.Configured)
+        {
+            return null;
+        }
+        var names = Profile.Mcp.Stages.TryGetValue(stageName, out var listed) ? listed : [];
+        if (Agent is not { Name: "claude" })
+        {
+            if (names.Length > 0)
+            {
+                Emit(EventTypes.Warning, $"MCP servers are configured for {stageName} ({string.Join(", ", names)}) but only the claude agent can be given them; {Agent?.Name ?? "this agent"} runs without them.");
+            }
+            return null;
+        }
+
+        var servers = new Dictionary<string, object>();
+        foreach (var name in names)
+        {
+            var server = Profile.Mcp.Servers[name];
+            servers[name] = string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase)
+                ? new Dictionary<string, object?> { ["type"] = "http", ["url"] = server.Url }
+                : new Dictionary<string, object?> { ["type"] = "stdio", ["command"] = server.Command, ["args"] = server.Args, ["env"] = server.Env };
+        }
+        var file = Path.Combine(RunDir, $"mcp-{stageName.ToLowerInvariant()}.json");
+        Directory.CreateDirectory(RunDir);
+        File.WriteAllText(file, System.Text.Json.JsonSerializer.Serialize(new { mcpServers = servers }));
+        Emit(EventTypes.System, names.Length > 0 ? $"MCP for {stageName}: {string.Join(", ", names)}." : $"MCP for {stageName}: none (only the project's configured servers are allowed, and none is listed for this stage).");
+        return new McpAccess(file, names.Select(n => $"mcp__{n}__*").ToArray());
+    }
+
     /// <summary>Prompt sections for guidance notes and the reason the previous attempt failed.</summary>
     public string PromptContext()
     {
@@ -154,6 +190,9 @@ public sealed class StageContext
         return sb.ToString();
     }
 }
+
+/// <summary>What <see cref="StageContext.McpFor"/> hands a stage: the per-stage MCP config file and the Claude tool patterns that allow it.</summary>
+public sealed record McpAccess(string ConfigFile, string[] ToolPatterns);
 
 public interface IStage
 {

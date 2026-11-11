@@ -32,6 +32,13 @@ public sealed class ClaudeAgent(ClaudeOptions options) : IAgent
             args.Add("--max-budget-usd");
             args.Add(budget.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture));
         }
+        if (!string.IsNullOrWhiteSpace(request.McpConfigFile))
+        {
+            // Only the servers MoonWalk wrote for this stage; the project's own .mcp.json and the user's servers stay out of this run.
+            args.Add("--mcp-config");
+            args.Add(request.McpConfigFile);
+            args.Add("--strict-mcp-config");
+        }
         var allowed = request.AllowedTools ?? options.AllowedTools;
         var disallowed = request.DisallowedTools ?? options.DisallowedTools;
         if (allowed.Length > 0)

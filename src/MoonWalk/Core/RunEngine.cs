@@ -249,11 +249,8 @@ public sealed class RunEngine
         {
             return (false, ex.Message);
         }
-        if (!stages.Select(s => s.Name).SequenceEqual(run.Stages.Select(s => s.Name)))
-        {
-            return (false, "The project's stages changed since this run started, so it cannot be reopened.");
-        }
-
+        // The profile may have gained or lost a stage since the run started (for example a Verify stage): keep the records of the
+        // stages both have, add the new ones as Pending.
         var names = stages.Select(s => s.Name).ToList();
         var target = request.From is { Length: > 0 } from
             ? names.FindIndex(n => string.Equals(n, from, StringComparison.OrdinalIgnoreCase))
@@ -293,6 +290,10 @@ public sealed class RunEngine
         _store.Update(id, r =>
         {
             r.Rounds = rounds;
+            if (!names.SequenceEqual(r.Stages.Select(s => s.Name)))
+            {
+                r.Stages = names.Select(n => r.Stages.FirstOrDefault(x => x.Name == n) ?? new StageRecord { Name = n }).ToList();
+            }
             r.Status = RunStatus.Queued;
             r.Error = null;
             r.FinishedAt = null;

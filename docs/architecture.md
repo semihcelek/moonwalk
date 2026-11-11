@@ -82,10 +82,10 @@ in a job object that dies with MoonWalk (see Safety below), so a recovered run n
 
 `POST /api/runs/{id}/reopen` `{ note, from?, agent?, model?, effort?, auto? }` (`RunEngine.ReopenAsync`) takes a Done, Failed or Cancelled run
 back to work on its own branch, so a fix after review (or after an auto-mode run released the workspace) stays on one branch and in one
-run. It refuses an active or `Interrupted` run (recover that instead), an empty note, a changed stage list, a missing workspace record, and
+run. It refuses an active or `Interrupted` run (recover that instead), an empty note, a missing workspace record, and
 a branch that no longer exists (checked up front with `git rev-parse refs/heads/<branch>`). Otherwise it raises `Run.Rounds`, clears the
 error, finish time, review-merge fields and the archived flag, sets automation to what the request says (default all off, so the round
-can be reviewed), applies agent, model and effort from the restart stage on like a retry, resets the stages from `from` (default
+can be reviewed), adopts the profile's current stage list (stages the run lacks, such as a Verify added later, start Pending), applies agent, model and effort from the restart stage on like a retry, resets the stages from `from` (default
 `Implement`) to `Pending`, records the note as guidance and starts `ExecuteAsync(reopenFrom: index)`.
 
 `ExecuteAsync` then takes the project lock like any run (it waits if another run holds the workspace). If the run still holds its workspace
@@ -158,10 +158,24 @@ the project so the Editor imports the files, then **Retry** from Handover to com
 
 The Unity step after Implement. An agent with the unity-mcp tools reads the Console and waits for compilation (fixing any `error CS`),
 wires what the change needs into the scene or assets, checks the Console again and saves. It has its own agent, model and effort like
-every agent stage. For Claude the allowed tools are the profile's plus `mcp__unityMCP__*`. Whatever it changed on disk goes through the
-same baseline check, guards and commit as Implement (changing nothing is fine: scene edits made through unity-mcp live in the open
+every agent stage. For Claude the allowed tools are the profile's plus the stage's MCP patterns (see MCP below); with no `mcp` section
+they are `mcp__unityMCP__*` and `mcp__unity-mcp__*` (the server is registered under either name). Whatever it changed on disk goes through
+the same baseline check, guards (`guards.integrateAllowPaths` are exempt from deny and allow rules for this stage only, so a saved scene
+or prefab can pass) and commit as Implement (changing nothing is fine: scene edits made through unity-mcp live in the open
 Editor until saved). If the Editor is not reachable it replies `STATUS: BLOCKED`, which waits for you like any blocked stage. Its report
 is saved as the `integrate.md` artifact.
+
+### MCP access (`McpOptions`, `StageContext.McpFor`)
+
+`mcp.servers` (name to `type` stdio with `command`/`args`/`env`, or http with `url`) and `mcp.stages` (Spec, Implement or Integrate to server
+names) are validated by `ProjectRegistry` (unknown server, non-agent stage, a stdio server without a command, an http one without a url,
+and an Integrate stage with no server listed are profile errors). When the section is non-empty, each agent stage calls
+`StageContext.McpFor(stage)`: for the `claude` agent it writes `runs/<id>/mcp-<stage>.json` (`{ "mcpServers": { ... } }` with only that stage's
+servers) and returns the tool patterns `mcp__<server>__*`. The stage passes them as `AgentRequest.McpConfigFile` and adds the patterns to
+the allowed tools; `ClaudeAgent` then adds `--mcp-config <file> --strict-mcp-config`, so even the project's `.mcp.json` is ignored and a
+stage with no servers sees none. Other agents get a `Warning` event naming the servers they run without. Spec keeps its read-only tools
+plus the MCP patterns (so list only read-only servers there; MoonWalk still verifies afterwards that no file changed). Verified with
+Claude Haiku against a stdio server: allowed gives the real answer, a stage with none listed cannot reach it, and both leave no denials.
 
 ### ImplementStage
 

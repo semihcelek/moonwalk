@@ -12,7 +12,8 @@ namespace MoonWalk.Pipeline.Stages;
 /// </summary>
 public sealed class IntegrateStage : IStage
 {
-    private static readonly string[] UnityTools = ["mcp__unityMCP__*"];
+    // Without an mcp section in the profile: the unity-mcp server under either name it is usually registered with.
+    private static readonly string[] LegacyUnityTools = ["mcp__unityMCP__*", "mcp__unity-mcp__*"];
 
     public string Name => "Integrate";
 
@@ -24,9 +25,10 @@ public sealed class IntegrateStage : IStage
         context.SetStageAgent(agent.Name);
         context.Emit(EventTypes.System, $"Running {agent.Name} with unity-mcp in {context.WorkDir}.");
 
-        var allowed = context.Profile.Claude.AllowedTools.Concat(UnityTools).ToArray();
+        var mcp = context.McpFor(Name);
+        var allowed = context.Profile.Claude.AllowedTools.Concat(mcp?.ToolPatterns ?? LegacyUnityTools).ToArray();
         var headBefore = await workspace.Workspace.GetHeadAsync(workspace.State, ct);
-        var result = await agent.RunAsync(new AgentRequest(BuildPrompt(context), context.WorkDir, allowed, MaxBudgetUsd: context.RemainingBudgetUsd), context.Emit, ct);
+        var result = await agent.RunAsync(new AgentRequest(BuildPrompt(context), context.WorkDir, allowed, MaxBudgetUsd: context.RemainingBudgetUsd, McpConfigFile: mcp?.ConfigFile), context.Emit, ct);
 
         context.AddUsage(agent.Name, result);
         if (result.Usage is { } usage)
@@ -61,7 +63,7 @@ public sealed class IntegrateStage : IStage
         if (changes.Paths.Count > 0)
         {
             var lines = await workspace.Workspace.StageAsync(workspace.State, changes.Paths, context.RunDir, ct);
-            var violations = Guards.Check(changes.Paths, lines, context.Profile.Guards);
+            var violations = Guards.Check(changes.Paths, lines, context.Profile.Guards, context.Profile.Guards.IntegrateAllowPaths);
             if (violations.Count > 0)
             {
                 foreach (var violation in violations)

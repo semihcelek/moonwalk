@@ -23,8 +23,10 @@ public sealed class SpecStage : IStage
         context.SetStageAgent(agent.Name);
         context.Emit(EventTypes.System, $"Running {agent.Name} read-only to write the spec.");
 
+        var mcp = context.McpFor(Name);
         var result = await agent.RunAsync(
-            new AgentRequest(BuildPrompt(context), context.WorkDir, ReadOnlyTools, NoWriteTools, ReadOnly: true, MaxBudgetUsd: context.RemainingBudgetUsd),
+            new AgentRequest(BuildPrompt(context), context.WorkDir, ReadOnlyTools.Concat(mcp?.ToolPatterns ?? []).ToArray(), NoWriteTools, ReadOnly: true,
+                MaxBudgetUsd: context.RemainingBudgetUsd, McpConfigFile: mcp?.ConfigFile),
             context.Emit,
             ct);
 

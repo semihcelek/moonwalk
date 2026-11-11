@@ -5,7 +5,8 @@ public delegate void EmitEvent(string type, string? text, Dictionary<string, obj
 /// <summary>
 /// One job for an agent. <paramref name="ReadOnly"/> asks for a run that must not change files (the Spec stage); agents map it to
 /// whatever they have (tool lists for Claude, plan mode for agy). The allowed/disallowed lists, when set, replace the ones from the
-/// project profile for this request. Whether an agent honoured read-only is always verified by the stage, never trusted.
+/// project profile for this request. <paramref name="McpConfigFile"/>, when set, is the only MCP configuration the agent may load (Claude: --mcp-config with
+/// --strict-mcp-config). Whether an agent honoured read-only is always verified by the stage, never trusted.
 /// </summary>
 public sealed record AgentRequest(
     string Prompt,
@@ -13,7 +14,8 @@ public sealed record AgentRequest(
     string[]? AllowedTools = null,
     string[]? DisallowedTools = null,
     bool ReadOnly = false,
-    double? MaxBudgetUsd = null);
+    double? MaxBudgetUsd = null,
+    string? McpConfigFile = null);
 
 public sealed record AgentResult(
     int ExitCode,

@@ -107,9 +107,22 @@ strong model and implement with a cheaper one. Blank means the project's default
 Examples: Claude Opus (high) for the plan and Claude Sonnet or Haiku for the implementation; agy Gemini 4 Argon (Medium) to plan
 and Gemini 3.8 Flash (High) for the Unity step; Muse Wonder or Spark to plan and Ember to implement. Efforts are only offered
 where the agent's CLI accepts them, and a choice that cannot work is refused when the run starts. A **retry** can change agent,
-model and effort too. The Integrate stage needs the Unity Editor open with unity-mcp connected; for Claude it is allowed the
-`mcp__unityMCP__*` tools, and agy and Muse need unity-mcp in their own configuration. Add `"Integrate"` to the profile's `stages`
-(after `Implement`) to use it.
+model and effort too. The Integrate stage needs the Unity Editor open with unity-mcp connected. Add `"Integrate"` to the profile's
+`stages` (after `Implement`) to use it.
+
+### MCP servers for agents
+
+A profile can say which MCP servers each agent stage may use (`mcp` in `projects/example.json.sample`): `servers` defines them (stdio
+`command` and `args`, or an http `url`) and `stages` lists, for `Spec`, `Implement` and `Integrate`, the server names that stage gets.
+For the **claude** agent MoonWalk writes a config file with just those servers into the run folder, starts Claude with
+`--strict-mcp-config` (so the project's own `.mcp.json` and your other servers stay out) and allows exactly `mcp__<name>__*`. A stage
+with nothing listed gets no MCP at all. Muse, agy and generic agents cannot be given servers per stage: a stage that lists some runs
+without them and says so in a warning. Without an `mcp` section nothing changes (and the Integrate stage allows the unity-mcp server
+under either common name, `unity-mcp` or `unityMCP`).
+
+Scenes and prefabs are normally denied by `guards`. `guards.integrateAllowPaths` lists globs (for example `**/*.unity`) the Integrate
+stage may change anyway, because an Editor-side step has to save them; Implement keeps the strict rules. A server like unity-mcp can run
+code in your open Editor, outside MoonWalk's file guards until something is saved, so list it for Integrate only.
 
 ### Seeing what a run did
 

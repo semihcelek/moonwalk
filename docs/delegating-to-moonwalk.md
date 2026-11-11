@@ -133,6 +133,9 @@ for a human, and the queue waits with it. Full auto never retries and never push
 
 ## Projects
 
+A project profile can give the claude agent MCP servers per stage (`mcp`, for example a project-knowledge server in Spec and Implement); briefing notes below say when so.
+Muse and agy run without MCP servers. Say in a brief what the agent must look up, not which tool to call.
+
 {{projects}}
 
 ## When you are asked to prepare work for MoonWalk

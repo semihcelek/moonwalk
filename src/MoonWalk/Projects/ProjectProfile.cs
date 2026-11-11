@@ -28,6 +28,41 @@ public sealed class GuardRules
     public int MaxChangedFiles { get; set; } = 60;
 
     public int MaxChangedLines { get; set; } = 2000;
+
+    /// <summary>
+    /// Globs the Integrate stage may change even though <see cref="DenyPaths"/> (or <see cref="AllowPaths"/>) would refuse them, for the files an
+    /// Editor-side step has to save (scenes, prefabs). Applies to that stage only; Implement keeps the strict rules.
+    /// </summary>
+    public string[] IntegrateAllowPaths { get; set; } = [];
+}
+
+/// <summary>An MCP server an agent may be given. <c>stdio</c> starts <see cref="Command"/>; <c>http</c> connects to <see cref="Url"/>.</summary>
+public sealed class McpServer
+{
+    public string Type { get; set; } = "stdio";
+
+    public string? Command { get; set; }
+
+    public string[] Args { get; set; } = [];
+
+    public string? Url { get; set; }
+
+    public Dictionary<string, string> Env { get; set; } = new();
+}
+
+/// <summary>
+/// MCP servers by name, and which agent stages may use which. Only the claude agent can be given them (it takes a per-run config file and a tool
+/// allow-list); a stage that lists servers for another agent runs without them and says so. When this section is empty nothing changes: agents see
+/// whatever their own configuration gives them, and Claude's tool allow-list decides what it may call.
+/// </summary>
+public sealed class McpOptions
+{
+    public Dictionary<string, McpServer> Servers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Stage name (Spec, Implement, Integrate) to the server names that stage may use. A stage not listed gets none.</summary>
+    public Dictionary<string, string[]> Stages { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public bool Configured => Servers.Count > 0 || Stages.Count > 0;
 }
 
 public sealed class ClaudeOptions
@@ -180,6 +215,8 @@ public sealed class ProjectProfile
     public AgyOptions Agy { get; set; } = new();
 
     public BudgetLimits Budget { get; set; } = new();
+
+    public McpOptions Mcp { get; set; } = new();
 
     /// <summary>The default automation for runs of this project; the New run dialog can change it per run.</summary>
     public MoonWalk.Core.AutoMode Auto { get; set; } = new();
